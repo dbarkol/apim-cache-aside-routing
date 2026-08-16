@@ -81,6 +81,9 @@ resource profileTable 'Microsoft.Storage/storageAccounts/tableServices/tables@20
 resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   name: foundryAccountName
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   kind: 'AIServices'
   sku: {
     name: 'S0'
@@ -100,6 +103,9 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   name: foundryProjectName
   parent: foundryAccount
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   tags: tags
   properties: {
     description: 'APIM cache-aside Gateway Routing Profile reference project'
