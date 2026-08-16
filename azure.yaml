@@ -1,0 +1,12 @@
+name: apim-cache-aside-routing
+metadata:
+  template: apim-cache-aside-routing@0.1.0
+infra:
+  provider: bicep
+  path: infra
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      run: ./scripts/preflight.sh
+      interactive: false
