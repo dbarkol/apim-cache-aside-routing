@@ -10,6 +10,15 @@
     },
     "gpt4oMiniModelVersion": {
       "value": "${GPT4O_MINI_MODEL_VERSION}"
+    },
+    "profileCacheTtlSeconds": {
+      "value": "${PROFILE_CACHE_TTL_SECONDS=300}"
+    },
+    "profileLookupTimeoutSeconds": {
+      "value": "${PROFILE_LOOKUP_TIMEOUT_SECONDS=3}"
+    },
+    "tokenLimitPolicyVariant": {
+      "value": "${TOKEN_LIMIT_POLICY_VARIANT=azure-openai-token-limit}"
     }
   }
 }

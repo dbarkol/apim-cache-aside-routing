@@ -1,0 +1,160 @@
+<policies>
+  <inbound>
+    <base />
+    <!-- Test adapter: production gateways should derive the Profile Key from trusted identity and request context. -->
+    <set-variable name="profileKey" value='@(context.Request.Headers.GetValueOrDefault("x-profile-key", ""))' />
+    <choose>
+      <when condition='@(!System.Text.RegularExpressions.Regex.IsMatch((string)context.Variables["profileKey"], "^[A-Za-z0-9._-]{1,128}$"))'>
+        <return-response>
+          <set-status code="400" reason="Bad Request" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@("{\"error\":{\"code\":\"InvalidProfileKey\",\"message\":\"A valid routing profile is required.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+        </return-response>
+      </when>
+    </choose>
+    <!-- Resolve the compact, validated profile from APIM's built-in cache. -->
+    <cache-lookup-value key='@((string)context.Variables["profileKey"])' variable-name="cachedProfile" caching-type="internal" />
+    <choose>
+      <when condition='@(context.Variables.ContainsKey("cachedProfile"))'>
+        <set-variable name="profileCacheOutcome" value="hit" />
+        <set-variable name="normalizedProfile" value='@((string)context.Variables["cachedProfile"])' />
+      </when>
+      <otherwise>
+        <!-- On a miss, point-read the version-one Table entity with APIM's managed identity. -->
+        <set-variable name="profileCacheOutcome" value="miss" />
+        <send-request mode="new" response-variable-name="profileResponse" timeout="{{ProfileLookupTimeoutSeconds}}" ignore-error="true">
+          <set-url>@("{{ProfileTableEndpoint}}/{{ProfileTableName}}(PartitionKey='profiles-v1',RowKey='" + (string)context.Variables["profileKey"] + "')")</set-url>
+          <set-method>GET</set-method>
+          <set-header name="Accept" exists-action="override">
+            <value>application/json;odata=nometadata</value>
+          </set-header>
+          <set-header name="x-ms-version" exists-action="override">
+            <value>2019-02-02</value>
+          </set-header>
+          <authentication-managed-identity resource="https://storage.azure.com/" ignore-error="false" />
+        </send-request>
+        <choose>
+          <when condition='@(!context.Variables.ContainsKey("profileResponse") || context.Variables["profileResponse"] == null)'>
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@("{\"error\":{\"code\":\"ProfileSourceUnavailable\",\"message\":\"Routing configuration is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+            </return-response>
+          </when>
+          <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode == 404)'>
+            <return-response>
+              <set-status code="500" reason="Internal Server Error" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@("{\"error\":{\"code\":\"ProfileNotFound\",\"message\":\"Routing configuration could not be resolved.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+            </return-response>
+          </when>
+          <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode != 200)'>
+            <return-response>
+              <set-status code="503" reason="Service Unavailable" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@("{\"error\":{\"code\":\"ProfileSourceUnavailable\",\"message\":\"Routing configuration is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <!-- Validate the stored schema and reduce it to the stable cache/application contract. -->
+        <set-variable name="normalizedProfile" value='@{
+          var entity = ((IResponse)context.Variables["profileResponse"]).Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+          var schemaVersion = entity["SchemaVersion"];
+          var backendId = entity["BackendId"];
+          var maxTpm = entity["MaxTpm"];
+          var valid = entity["PartitionKey"]?.ToString() == "profiles-v1"
+            &amp;&amp; entity["RowKey"]?.ToString() == (string)context.Variables["profileKey"]
+            &amp;&amp; schemaVersion != null
+            &amp;&amp; schemaVersion.Type == Newtonsoft.Json.Linq.JTokenType.Integer
+            &amp;&amp; (int)schemaVersion == 1
+            &amp;&amp; backendId != null
+            &amp;&amp; backendId.Type == Newtonsoft.Json.Linq.JTokenType.String
+            &amp;&amp; System.Text.RegularExpressions.Regex.IsMatch(backendId.ToString(), "^[A-Za-z0-9._-]{1,80}$")
+            &amp;&amp; maxTpm != null
+            &amp;&amp; maxTpm.Type == Newtonsoft.Json.Linq.JTokenType.Integer
+            &amp;&amp; ((int)maxTpm == 500 || (int)maxTpm == 4000 || (int)maxTpm == 8000);
+          if (!valid)
+          {
+            return "";
+          }
+          return new Newtonsoft.Json.Linq.JObject(
+            new Newtonsoft.Json.Linq.JProperty("schemaVersion", 1),
+            new Newtonsoft.Json.Linq.JProperty("backendId", backendId.ToString()),
+            new Newtonsoft.Json.Linq.JProperty("maxTpm", (int)maxTpm)
+          ).ToString(Newtonsoft.Json.Formatting.None);
+        }' />
+        <choose>
+          <when condition='@((string)context.Variables["normalizedProfile"] == "")'>
+            <return-response>
+              <set-status code="500" reason="Internal Server Error" />
+              <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+              </set-header>
+              <set-body>@("{\"error\":{\"code\":\"InvalidProfile\",\"message\":\"Routing configuration is invalid.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+            </return-response>
+          </when>
+        </choose>
+        <!-- Cache storage is asynchronous; this request continues with normalizedProfile directly. -->
+        <cache-store-value key='@((string)context.Variables["profileKey"])' value='@((string)context.Variables["normalizedProfile"])' duration="{{ProfileCacheTtlSeconds}}" caching-type="internal" />
+      </otherwise>
+    </choose>
+    <!-- Apply the allowlisted current TPM branch using the Profile Key as the shared counter. -->
+    <set-variable name="backendId" value='@((string)Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["normalizedProfile"])["backendId"])' />
+    <set-variable name="maxTpm" value='@((int)Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["normalizedProfile"])["maxTpm"])' />
+    <choose>
+      <when condition='@((int)context.Variables["maxTpm"] == 500)'>
+        <set-variable name="appliedTokenLimitTpm" value="500" />
+        <llm-token-limit tokens-per-minute="500" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
+      </when>
+      <when condition='@((int)context.Variables["maxTpm"] == 4000)'>
+        <set-variable name="appliedTokenLimitTpm" value="4000" />
+        <llm-token-limit tokens-per-minute="4000" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
+      </when>
+      <when condition='@((int)context.Variables["maxTpm"] == 8000)'>
+        <set-variable name="appliedTokenLimitTpm" value="8000" />
+        <llm-token-limit tokens-per-minute="8000" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
+      </when>
+    </choose>
+    <!-- Authenticate to Foundry and route through the backend entity selected by the profile. -->
+    <set-header name="api-key" exists-action="delete" />
+    <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="foundryAccessToken" ignore-error="false" />
+    <set-header name="Authorization" exists-action="override">
+      <value>@("Bearer " + (string)context.Variables["foundryAccessToken"])</value>
+    </set-header>
+    <set-query-parameter name="api-version" exists-action="override">
+      <value>__OPENAI_API_VERSION__</value>
+    </set-query-parameter>
+    <set-backend-service backend-id='@((string)context.Variables["backendId"])' />
+  </inbound>
+  <backend>
+    <forward-request />
+  </backend>
+  <outbound>
+    <base />
+    <!-- Non-secret test diagnostics are disabled by default and enabled temporarily by the smoke test. -->
+    <choose>
+      <when condition='@({{EnableGatewayDebugHeaders}})'>
+        <set-header name="X-Profile-Cache" exists-action="override">
+          <value>@((string)context.Variables["profileCacheOutcome"])</value>
+        </set-header>
+        <set-header name="X-Backend-Id" exists-action="override">
+          <value>@((string)context.Variables["backendId"])</value>
+        </set-header>
+        <set-header name="X-Token-Limit-Tpm" exists-action="override">
+          <value>@((string)context.Variables["appliedTokenLimitTpm"])</value>
+        </set-header>
+      </when>
+    </choose>
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

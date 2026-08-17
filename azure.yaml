@@ -10,3 +10,8 @@ hooks:
       shell: sh
       run: ./scripts/preflight.sh
       interactive: false
+  postprovision:
+    posix:
+      shell: sh
+      run: ./scripts/seed-profile.sh
+      interactive: false

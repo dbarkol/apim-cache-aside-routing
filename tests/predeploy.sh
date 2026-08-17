@@ -22,6 +22,7 @@ jq -e '
   and ([.. | objects | select(.type? == "Microsoft.CognitiveServices/accounts/deployments")][0].sku.name == "GlobalStandard")
   and ([.. | objects | select(.type? == "Microsoft.CognitiveServices/accounts/deployments")][0].sku.capacity == 1)
   and ([.. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")] | length >= 1)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/namedValues")] | length >= 5)
   and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis")] | length == 1)
   and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis/operations")] | length == 1)
   and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/products")] | length == 1)
@@ -30,8 +31,44 @@ jq -e '
 ' "$template_file" >/dev/null
 
 grep -q 'resource="https://cognitiveservices.azure.com"' \
-  "$repo_root/policies/chat/direct.xml"
-grep -q '<set-backend-service backend-id="gpt-4o-mini" />' \
-  "$repo_root/policies/chat/direct.xml"
+  "$repo_root/policies/chat/azure-openai-token-limit.xml"
+
+for policy_file in \
+  "$repo_root/policies/chat/azure-openai-token-limit.xml" \
+  "$repo_root/policies/chat/llm-token-limit.xml"; do
+  grep -q 'x-profile-key' "$policy_file"
+  grep -q 'cache-lookup-value' "$policy_file"
+  grep -q 'cache-store-value' "$policy_file"
+  grep -q 'https://storage.azure.com/' "$policy_file"
+  grep -q "PartitionKey='profiles-v1'" "$policy_file"
+  grep -q 'schemaVersion' "$policy_file"
+  grep -q 'backendId' "$policy_file"
+  grep -q 'maxTpm' "$policy_file"
+  grep -q 'tokens-per-minute="500"' "$policy_file"
+  grep -q 'tokens-per-minute="4000"' "$policy_file"
+  grep -q 'tokens-per-minute="8000"' "$policy_file"
+  grep -q 'backend-id='"'"'@((string)context.Variables\["backendId"\])'"'"'' "$policy_file"
+done
+
+grep -q '<azure-openai-token-limit' \
+  "$repo_root/policies/chat/azure-openai-token-limit.xml"
+grep -q '<llm-token-limit' \
+  "$repo_root/policies/chat/llm-token-limit.xml"
+
+grep -q '"PartitionKey":"profiles-v1"' "$repo_root/scripts/seed-profile.sh"
+grep -q '"RowKey":"lob1-gpt4o-mini"' "$repo_root/scripts/seed-profile.sh"
+grep -q '"SchemaVersion@odata.type":"Edm.Int32"' "$repo_root/scripts/seed-profile.sh"
+grep -q '"MaxTpm@odata.type":"Edm.Int32"' "$repo_root/scripts/seed-profile.sh"
+grep -q 'get-access-token' "$repo_root/scripts/seed-profile.sh"
+grep -q 'deployer().objectId' "$repo_root/infra/main.bicep"
+grep -q "SecurityControl: 'Ignore'" "$repo_root/infra/resources.bicep"
+grep -q "tokenLimitPolicyVariant string = 'azure-openai-token-limit'" \
+  "$repo_root/infra/main.bicep"
+grep -q 'x-profile-key: lob1-gpt4o-mini' "$repo_root/scripts/smoke.sh"
+grep -q 'assert_profile_headers miss' "$repo_root/scripts/smoke.sh"
+grep -q 'assert_profile_headers hit' "$repo_root/scripts/smoke.sh"
+grep -q 'x-profile-cache:' "$repo_root/scripts/smoke.sh"
+grep -q 'x-backend-id: gpt-4o-mini' "$repo_root/scripts/smoke.sh"
+grep -q 'x-token-limit-tpm: 8000' "$repo_root/scripts/smoke.sh"
 
 echo "Predeployment contract is valid."

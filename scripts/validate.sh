@@ -38,8 +38,11 @@ az bicep build \
   --outfile "$template_file" \
   --only-show-errors
 
-xmllint --noout "$repo_root/policies/chat/direct.xml"
+xmllint --noout \
+  "$repo_root/policies/chat/azure-openai-token-limit.xml" \
+  "$repo_root/policies/chat/llm-token-limit.xml"
 bash -n "$repo_root/scripts/preflight.sh"
+bash -n "$repo_root/scripts/seed-profile.sh"
 bash -n "$repo_root/scripts/smoke.sh"
 azd show --output json >/dev/null
 

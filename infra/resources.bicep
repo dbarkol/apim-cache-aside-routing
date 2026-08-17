@@ -12,6 +12,14 @@ param gpt4oMiniModelVersion string
 
 param openAiApiVersion string
 
+param profileCacheTtlSeconds int
+
+param profileLookupTimeoutSeconds int
+
+param tokenLimitPolicyVariant string
+
+param deploymentPrincipalId string
+
 var tags = {
   'azd-env-name': environmentName
   project: 'apim-cache-aside-routing'
@@ -27,6 +35,17 @@ var cognitiveServicesOpenAiUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 )
+var storageTableDataReaderRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '76199698-9eea-4c19-bc75-cec21354c6b6'
+)
+var storageTableDataContributorRoleDefinitionId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+)
+var selectedChatPolicy = tokenLimitPolicyVariant == 'llm-token-limit'
+  ? loadTextContent('../policies/chat/llm-token-limit.xml')
+  : loadTextContent('../policies/chat/azure-openai-token-limit.xml')
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -58,7 +77,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   sku: {
     name: 'Standard_LRS'
   }
-  tags: tags
+  tags: union(tags, {
+    SecurityControl: 'Ignore'
+  })
   properties: {
     allowBlobPublicAccess: false
     allowSharedKeyAccess: false
@@ -160,6 +181,25 @@ resource foundryInferenceRole 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
+resource profileTableReaderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, apim.id, storageTableDataReaderRoleDefinitionId)
+  scope: storageAccount
+  properties: {
+    principalId: apim.identity.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: storageTableDataReaderRoleDefinitionId
+  }
+}
+
+resource profileSeedContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, deploymentPrincipalId, storageTableDataContributorRoleDefinitionId)
+  scope: storageAccount
+  properties: {
+    principalId: deploymentPrincipalId
+    roleDefinitionId: storageTableDataContributorRoleDefinitionId
+  }
+}
+
 resource modelBackend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
   name: 'gpt-4o-mini'
   parent: apim
@@ -215,20 +255,72 @@ resource chatOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-
   }
 }
 
+resource profileTableEndpointNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  name: 'ProfileTableEndpoint'
+  parent: apim
+  properties: {
+    displayName: 'ProfileTableEndpoint'
+    secret: false
+    value: 'https://${storageAccount.name}.table.core.windows.net'
+  }
+}
+
+resource profileTableNameNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  name: 'ProfileTableName'
+  parent: apim
+  properties: {
+    displayName: 'ProfileTableName'
+    secret: false
+    value: profileTable.name
+  }
+}
+
+resource profileCacheTtlNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  name: 'ProfileCacheTtlSeconds'
+  parent: apim
+  properties: {
+    displayName: 'ProfileCacheTtlSeconds'
+    secret: false
+    value: string(profileCacheTtlSeconds)
+  }
+}
+
+resource profileLookupTimeoutNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  name: 'ProfileLookupTimeoutSeconds'
+  parent: apim
+  properties: {
+    displayName: 'ProfileLookupTimeoutSeconds'
+    secret: false
+    value: string(profileLookupTimeoutSeconds)
+  }
+}
+
+resource gatewayDebugHeadersNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
+  name: 'EnableGatewayDebugHeaders'
+  parent: apim
+  properties: {
+    displayName: 'EnableGatewayDebugHeaders'
+    secret: false
+    value: 'false'
+  }
+}
+
 resource chatPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   name: 'policy'
   parent: chatApi
   properties: {
     format: 'rawxml'
-    value: replace(
-      loadTextContent('../policies/chat/direct.xml'),
-      '__OPENAI_API_VERSION__',
-      openAiApiVersion
-    )
+    value: replace(selectedChatPolicy, '__OPENAI_API_VERSION__', openAiApiVersion)
   }
   dependsOn: [
     chatOperation
     modelBackend
+    profileTableReaderRole
+    profileTableEndpointNamedValue
+    profileTableNameNamedValue
+    profileCacheTtlNamedValue
+    profileLookupTimeoutNamedValue
+    gatewayDebugHeadersNamedValue
   ]
 }
 
@@ -311,6 +403,7 @@ resource apimDiagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-0
 
 output apimName string = apim.name
 output apimGatewayUrl string = 'https://${apim.name}.azure-api.net'
+output storageAccountName string = storageAccount.name
 output foundryAccountName string = foundryAccount.name
 output foundryProjectName string = foundryProject.name
 output gpt4oMiniDeploymentName string = gpt4oMiniDeployment.name
