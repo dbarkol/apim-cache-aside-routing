@@ -12,7 +12,9 @@
     <base />
     <!-- Test adapter: production gateways should derive the Profile Key from trusted identity and request context. -->
     <set-variable name="profileKey" value='@(context.Request.Headers.GetValueOrDefault("x-profile-key", ""))' />
+    <!-- Guard the lookup pipeline so only supported Profile Key syntax can reach cache or Table Storage. -->
     <choose>
+      <!-- Condition: the header is missing or contains characters/length outside the Profile Key contract. -->
       <when condition='@(!System.Text.RegularExpressions.Regex.IsMatch((string)context.Variables["profileKey"], "^[A-Za-z0-9._-]{1,128}$"))'>
         <return-response>
           <set-status code="400" reason="Bad Request" />
@@ -25,12 +27,15 @@
     </choose>
     <!-- Resolve the compact, validated profile from APIM's built-in cache. -->
     <cache-lookup-value key='@((string)context.Variables["profileKey"])' variable-name="cachedProfile" caching-type="internal" />
+    <!-- Select the fast cache-hit path or the protected Table Storage miss path. -->
     <choose>
+      <!-- Condition: APIM returned a previously validated, normalized profile for this key. -->
       <when condition='@(context.Variables.ContainsKey("cachedProfile"))'>
         <!-- Cache hits already contain only the normalized fields produced by the miss path. -->
         <set-variable name="profileCacheOutcome" value="hit" />
         <set-variable name="normalizedProfile" value='@((string)context.Variables["cachedProfile"])' />
       </when>
+      <!-- Fallback: no cache value exists, so rate-limit and perform one authoritative Table point read. -->
       <otherwise>
         <!-- On a miss, point-read the version-one Table entity with APIM's managed identity. -->
         <set-variable name="profileCacheOutcome" value="miss" />
@@ -52,6 +57,7 @@
           and other non-200 responses are temporary source failures.
         -->
         <choose>
+          <!-- Condition: send-request produced no response, which represents a timeout or transport failure. -->
           <when condition='@(!context.Variables.ContainsKey("profileResponse") || context.Variables["profileResponse"] == null)'>
             <return-response>
               <set-status code="503" reason="Service Unavailable" />
@@ -61,6 +67,7 @@
               <set-body>@("{\"error\":{\"code\":\"RoutingDependencyUnavailable\",\"message\":\"The service is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
+          <!-- Condition: Table Storage returned 404, so the requested profile does not exist. -->
           <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode == 404)'>
             <return-response>
               <set-status code="500" reason="Internal Server Error" />
@@ -70,6 +77,7 @@
               <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
+          <!-- Condition: any remaining non-200 result is a temporary Table service or authorization failure. -->
           <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode != 200)'>
             <return-response>
               <set-status code="503" reason="Service Unavailable" />
@@ -112,7 +120,9 @@
             new Newtonsoft.Json.Linq.JProperty("maxTpm", (int)maxTpm)
           ).ToString(Newtonsoft.Json.Formatting.None);
         }' />
+        <!-- Stop before caching or routing when normalization reports any schema or field validation failure. -->
         <choose>
+          <!-- Condition: validation returned the empty sentinel instead of a safe normalized profile. -->
           <when condition='@((string)context.Variables["normalizedProfile"] == "")'>
             <return-response>
               <set-status code="500" reason="Internal Server Error" />
@@ -153,6 +163,7 @@
     <base />
     <!-- Non-secret test diagnostics are disabled by default and enabled temporarily by the smoke test. -->
     <choose>
+      <!-- Condition: the deployment-controlled test switch explicitly permits diagnostic response headers. -->
       <when condition='@({{EnableGatewayDebugHeaders}})'>
         <set-header name="X-Profile-Cache" exists-action="override">
           <value>@((string)context.Variables["profileCacheOutcome"])</value>
@@ -168,7 +179,9 @@
   </outbound>
   <on-error>
     <base />
+    <!-- Map known miss throttling separately, then fail closed for every other policy execution error. -->
     <choose>
+      <!-- Condition: the per-Profile-Key cold lookup guard rejected an excess cache miss. -->
       <when condition='@(context.LastError.PolicyId == "profile-miss-rate-limit")'>
         <return-response>
           <set-status code="429" reason="Too Many Requests" />
@@ -178,6 +191,7 @@
           <set-body>@("{\"error\":{\"code\":\"TooManyRequests\",\"message\":\"Too many requests were received.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
         </return-response>
       </when>
+      <!-- Fallback: hide backend-application, parsing, identity, and other internal policy failure details. -->
       <otherwise>
         <return-response>
           <set-status code="500" reason="Internal Server Error" />
