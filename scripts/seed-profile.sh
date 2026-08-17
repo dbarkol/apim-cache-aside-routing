@@ -13,10 +13,12 @@ table_endpoint="https://${storage_account_name}.table.core.windows.net/gatewaypr
 profile_keys=(
   "lob1-gpt4o-mini"
   "test-nano"
+  "lob1-gpt4-1"
 )
 profiles=(
   '{"PartitionKey":"profiles-v1","RowKey":"lob1-gpt4o-mini","SchemaVersion":1,"SchemaVersion@odata.type":"Edm.Int32","BackendId":"gpt-4o-mini","MaxTpm":8000,"MaxTpm@odata.type":"Edm.Int32"}'
   '{"PartitionKey":"profiles-v1","RowKey":"test-nano","SchemaVersion":1,"SchemaVersion@odata.type":"Edm.Int32","BackendId":"nano-pool","MaxTpm":500,"MaxTpm@odata.type":"Edm.Int32"}'
+  '{"PartitionKey":"profiles-v1","RowKey":"lob1-gpt4-1","SchemaVersion":1,"SchemaVersion@odata.type":"Edm.Int32","BackendId":"mini-pool","MaxTpm":4000,"MaxTpm@odata.type":"Edm.Int32"}'
 )
 
 seed_profile() {

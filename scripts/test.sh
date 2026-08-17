@@ -16,9 +16,11 @@ fi
 "$repo_root/tests/api-contract.sh"
 "$repo_root/tests/refresh.sh"
 "$repo_root/tests/round-robin.sh"
+"$repo_root/tests/priority-routing.sh"
 
 if [[ "$run_faults" == true ]]; then
   "$repo_root/tests/faults.sh"
+  "$repo_root/tests/priority-overflow.sh"
 fi
 
 echo "Gateway Routing Profile tests passed."

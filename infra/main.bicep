@@ -16,6 +16,19 @@ param roundRobinModelName string = 'gpt-4o-mini'
 @description('Model version used by both equivalent round-robin deployments.')
 param roundRobinModelVersion string = '2024-07-18'
 
+@description('Model version used by both gpt-4.1-mini priority deployments.')
+param priorityModelVersion string = '2025-04-14'
+
+@minValue(1)
+@description('Failure count that trips the priority-1 mini backend circuit breaker.')
+param miniPrimaryCircuitBreakerFailureCount int = 3
+
+@description('ISO 8601 interval during which priority-1 mini backend failures are counted.')
+param miniPrimaryCircuitBreakerSamplingInterval string = 'PT1M'
+
+@description('ISO 8601 duration that the priority-1 mini backend circuit remains open.')
+param miniPrimaryCircuitBreakerTripDuration string = 'PT30S'
+
 @description('Azure OpenAI data-plane API version used by the APIM policy.')
 param openAiApiVersion string = '2024-10-21'
 
@@ -56,6 +69,10 @@ module solution './resources.bicep' = {
     gpt4oMiniModelVersion: gpt4oMiniModelVersion
     roundRobinModelName: roundRobinModelName
     roundRobinModelVersion: roundRobinModelVersion
+    priorityModelVersion: priorityModelVersion
+    miniPrimaryCircuitBreakerFailureCount: miniPrimaryCircuitBreakerFailureCount
+    miniPrimaryCircuitBreakerSamplingInterval: miniPrimaryCircuitBreakerSamplingInterval
+    miniPrimaryCircuitBreakerTripDuration: miniPrimaryCircuitBreakerTripDuration
     openAiApiVersion: openAiApiVersion
     profileCacheTtlSeconds: profileCacheTtlSeconds
     profileLookupTimeoutSeconds: profileLookupTimeoutSeconds
@@ -75,3 +92,7 @@ output GPT4O_MINI_DEPLOYMENT_NAME string = solution.outputs.gpt4oMiniDeploymentN
 output ROUND_ROBIN_DEPLOYMENT_1_NAME string = solution.outputs.roundRobinDeployment1Name
 output ROUND_ROBIN_DEPLOYMENT_2_NAME string = solution.outputs.roundRobinDeployment2Name
 output NANO_POOL_BACKEND_ID string = solution.outputs.nanoPoolBackendId
+output MINI_PRIMARY_DEPLOYMENT_NAME string = solution.outputs.miniPrimaryDeploymentName
+output MINI_OVERFLOW_DEPLOYMENT_NAME string = solution.outputs.miniOverflowDeploymentName
+output MINI_PRIMARY_BACKEND_ID string = solution.outputs.miniPrimaryBackendId
+output MINI_POOL_BACKEND_ID string = solution.outputs.miniPoolBackendId

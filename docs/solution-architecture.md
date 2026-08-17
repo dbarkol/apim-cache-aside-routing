@@ -275,6 +275,8 @@ Balancing is approximate and gateway-instance-local. Tests assert that both memb
 
 The primary backend circuit breaker observes `429` and `5xx`, honors `Retry-After`, and makes the lower-priority member eligible when the primary is unavailable.
 
+The sample exposes the failure count, sampling interval, and trip duration as deployment parameters. Their defaults (`3`, `PT1M`, and `PT30S`) are tuning points for demonstrating the behavior, not production sizing guidance.
+
 Circuit-breaker state is approximate across APIM gateway instances. Tests must use eventual assertions and avoid a fixed failover request count.
 
 ## Profile Refresh flow
@@ -437,7 +439,7 @@ Core tests:
 7. Update a dedicated source row and eventually observe the refreshed cached TPM value without a source mutation.
 8. Query Log Analytics to confirm both nano pool members participate over an aggregate sample.
 9. Confirm priority-1 handles healthy traffic.
-10. Under an opt-in induced failure, confirm priority-2 eventually receives traffic.
+10. Under an opt-in induced failure that temporarily points the primary backend to a test-only APIM `503` endpoint, confirm priority-2 eventually receives traffic and restore the original URL.
 
 ## Security boundaries
 

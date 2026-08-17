@@ -17,6 +17,18 @@
     "roundRobinModelVersion": {
       "value": "${ROUND_ROBIN_MODEL_VERSION}"
     },
+    "priorityModelVersion": {
+      "value": "${PRIORITY_MODEL_VERSION}"
+    },
+    "miniPrimaryCircuitBreakerFailureCount": {
+      "value": "${MINI_PRIMARY_CIRCUIT_BREAKER_FAILURE_COUNT=3}"
+    },
+    "miniPrimaryCircuitBreakerSamplingInterval": {
+      "value": "${MINI_PRIMARY_CIRCUIT_BREAKER_SAMPLING_INTERVAL=PT1M}"
+    },
+    "miniPrimaryCircuitBreakerTripDuration": {
+      "value": "${MINI_PRIMARY_CIRCUIT_BREAKER_TRIP_DURATION=PT30S}"
+    },
     "profileCacheTtlSeconds": {
       "value": "${PROFILE_CACHE_TTL_SECONDS=300}"
     },

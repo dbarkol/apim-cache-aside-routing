@@ -40,7 +40,8 @@ az bicep build \
 
 xmllint --noout \
   "$repo_root/policies/chat/azure-openai-token-limit.xml" \
-  "$repo_root/policies/chat/llm-token-limit.xml"
+  "$repo_root/policies/chat/llm-token-limit.xml" \
+  "$repo_root/policies/test/priority-fault.xml"
 bash -n "$repo_root/scripts/preflight.sh"
 bash -n "$repo_root/scripts/seed-profile.sh"
 bash -n "$repo_root/scripts/smoke.sh"
@@ -49,6 +50,8 @@ bash -n "$repo_root/tests/test-helpers.sh"
 bash -n "$repo_root/tests/api-contract.sh"
 bash -n "$repo_root/tests/faults.sh"
 bash -n "$repo_root/tests/round-robin.sh"
+bash -n "$repo_root/tests/priority-routing.sh"
+bash -n "$repo_root/tests/priority-overflow.sh"
 azd show --output json >/dev/null
 
 echo "Azure Developer CLI, Bicep, policy XML, and scripts are valid."

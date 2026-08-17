@@ -14,6 +14,14 @@ param roundRobinModelName string
 
 param roundRobinModelVersion string
 
+param priorityModelVersion string
+
+param miniPrimaryCircuitBreakerFailureCount int
+
+param miniPrimaryCircuitBreakerSamplingInterval string
+
+param miniPrimaryCircuitBreakerTripDuration string
+
 param openAiApiVersion string
 
 param profileCacheTtlSeconds int
@@ -37,6 +45,8 @@ var applicationInsightsName = 'appi-${environmentName}-${resourceToken}'
 var gpt4oMiniDeploymentName = 'gpt-4o-mini'
 var roundRobinDeployment1Name = 'round-robin-1'
 var roundRobinDeployment2Name = 'round-robin-2'
+var miniPrimaryDeploymentName = 'mini-primary'
+var miniOverflowDeploymentName = 'mini-overflow'
 var cognitiveServicesOpenAiUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
@@ -54,6 +64,7 @@ var selectedChatPolicy = tokenLimitPolicyVariant == 'llm-token-limit'
   : loadTextContent('../policies/chat/azure-openai-token-limit.xml')
 var resolveProfileFragment = loadTextContent('../policies/shared/resolve-profile.xml')
 var profileRefreshPolicy = loadTextContent('../policies/admin/profile-refresh.xml')
+var priorityFaultPolicy = loadTextContent('../policies/test/priority-fault.xml')
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -202,6 +213,48 @@ resource roundRobinDeployment2 'Microsoft.CognitiveServices/accounts/deployments
   ]
 }
 
+resource miniPrimaryDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  name: miniPrimaryDeploymentName
+  parent: foundryAccount
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4.1-mini'
+      version: priorityModelVersion
+    }
+    raiPolicyName: 'Microsoft.Default'
+    versionUpgradeOption: 'OnceCurrentVersionExpired'
+  }
+  dependsOn: [
+    roundRobinDeployment2
+  ]
+}
+
+resource miniOverflowDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  name: miniOverflowDeploymentName
+  parent: foundryAccount
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4.1-mini'
+      version: priorityModelVersion
+    }
+    raiPolicyName: 'Microsoft.Default'
+    versionUpgradeOption: 'OnceCurrentVersionExpired'
+  }
+  dependsOn: [
+    miniPrimaryDeployment
+  ]
+}
+
 resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
   name: apimName
   location: location
@@ -295,6 +348,63 @@ resource roundRobinBackend2 'Microsoft.ApiManagement/service/backends@2024-05-01
   ]
 }
 
+resource miniPrimaryBackend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: miniPrimaryDeploymentName
+  parent: apim
+  properties: {
+    description: 'Managed-identity-authenticated priority-1 gpt-4.1-mini deployment'
+    protocol: 'http'
+    title: 'gpt-4.1-mini primary'
+    url: 'https://${foundryAccountName}.openai.azure.com/openai/deployments/${miniPrimaryDeploymentName}'
+    circuitBreaker: {
+      rules: [
+        {
+          name: 'mini-primary-failures'
+          failureCondition: {
+            count: miniPrimaryCircuitBreakerFailureCount
+            interval: miniPrimaryCircuitBreakerSamplingInterval
+            errorReasons: [
+              'Server errors'
+              'Connection errors'
+            ]
+            statusCodeRanges: [
+              {
+                min: 429
+                max: 429
+              }
+              {
+                min: 500
+                max: 599
+              }
+            ]
+          }
+          tripDuration: miniPrimaryCircuitBreakerTripDuration
+          acceptRetryAfter: true
+        }
+      ]
+    }
+  }
+  dependsOn: [
+    miniPrimaryDeployment
+    foundryInferenceRole
+  ]
+}
+
+resource miniOverflowBackend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: miniOverflowDeploymentName
+  parent: apim
+  properties: {
+    description: 'Managed-identity-authenticated priority-2 gpt-4.1-mini deployment'
+    protocol: 'http'
+    title: 'gpt-4.1-mini overflow'
+    url: 'https://${foundryAccountName}.openai.azure.com/openai/deployments/${miniOverflowDeploymentName}'
+  }
+  dependsOn: [
+    miniOverflowDeployment
+    foundryInferenceRole
+  ]
+}
+
 resource nanoPool 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
   name: 'nano-pool'
   parent: apim
@@ -311,6 +421,29 @@ resource nanoPool 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
         {
           id: roundRobinBackend2.id
           priority: 1
+          weight: 1
+        }
+      ]
+    }
+  }
+}
+
+resource miniPool 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: 'mini-pool'
+  parent: apim
+  properties: {
+    description: 'Priority pool modeling PTU-like primary capacity with pay-as-you-go overflow'
+    type: 'Pool'
+    pool: {
+      services: [
+        {
+          id: miniPrimaryBackend.id
+          priority: 1
+          weight: 1
+        }
+        {
+          id: miniOverflowBackend.id
+          priority: 2
           weight: 1
         }
       ]
@@ -418,6 +551,46 @@ resource profileRefreshOperation 'Microsoft.ApiManagement/service/apis/operation
   }
 }
 
+resource priorityFaultApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
+  name: 'priority-fault'
+  parent: apim
+  properties: {
+    apiType: 'http'
+    description: 'Test-only endpoint that returns 503 for priority overflow validation'
+    displayName: 'Priority Overflow Fault'
+    path: 'internal/priority-fault'
+    protocols: [
+      'https'
+    ]
+    subscriptionRequired: false
+  }
+}
+
+resource priorityFaultOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
+  name: 'priority-fault-chat-completions'
+  parent: priorityFaultApi
+  properties: {
+    description: 'Return a deterministic 503 response with Retry-After.'
+    displayName: 'Induce priority backend fault'
+    method: 'POST'
+    request: {
+      representations: [
+        {
+          contentType: 'application/json'
+        }
+      ]
+    }
+    responses: [
+      {
+        description: 'Induced backend failure'
+        statusCode: 503
+      }
+    ]
+    templateParameters: []
+    urlTemplate: '/chat/completions'
+  }
+}
+
 resource profileTableEndpointNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
   name: 'ProfileTableEndpoint'
   parent: apim
@@ -515,6 +688,18 @@ resource profileRefreshApiPolicy 'Microsoft.ApiManagement/service/apis/policies@
   dependsOn: [
     profileRefreshOperation
     resolveProfilePolicyFragment
+  ]
+}
+
+resource priorityFaultApiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
+  name: 'policy'
+  parent: priorityFaultApi
+  properties: {
+    format: 'rawxml'
+    value: priorityFaultPolicy
+  }
+  dependsOn: [
+    priorityFaultOperation
   ]
 }
 
@@ -634,3 +819,7 @@ output gpt4oMiniDeploymentName string = gpt4oMiniDeployment.name
 output roundRobinDeployment1Name string = roundRobinDeployment1.name
 output roundRobinDeployment2Name string = roundRobinDeployment2.name
 output nanoPoolBackendId string = nanoPool.name
+output miniPrimaryDeploymentName string = miniPrimaryDeployment.name
+output miniOverflowDeploymentName string = miniOverflowDeployment.name
+output miniPrimaryBackendId string = miniPrimaryBackend.name
+output miniPoolBackendId string = miniPool.name

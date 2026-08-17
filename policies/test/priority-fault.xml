@@ -1,0 +1,21 @@
+<policies>
+  <inbound>
+    <base />
+    <return-response>
+      <set-status code="503" reason="Service Unavailable" />
+      <set-header name="Retry-After" exists-action="override">
+        <value>120</value>
+      </set-header>
+      <set-body>{"error":{"code":"InducedPriorityFault","message":"Test-only priority backend fault."}}</set-body>
+    </return-response>
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>
