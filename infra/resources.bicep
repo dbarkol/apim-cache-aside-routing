@@ -46,6 +46,8 @@ var storageTableDataContributorRoleDefinitionId = subscriptionResourceId(
 var selectedChatPolicy = tokenLimitPolicyVariant == 'llm-token-limit'
   ? loadTextContent('../policies/chat/llm-token-limit.xml')
   : loadTextContent('../policies/chat/azure-openai-token-limit.xml')
+var resolveProfileFragment = loadTextContent('../policies/shared/resolve-profile.xml')
+var profileRefreshPolicy = loadTextContent('../policies/admin/profile-refresh.xml')
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -255,6 +257,66 @@ resource chatOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-
   }
 }
 
+resource profileAdminApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
+  name: 'profile-admin'
+  parent: apim
+  properties: {
+    apiType: 'http'
+    description: 'Separately protected administrative operations for Gateway Routing Profiles'
+    displayName: 'Gateway Profile Administration'
+    path: 'internal/profiles'
+    protocols: [
+      'https'
+    ]
+    subscriptionRequired: true
+  }
+}
+
+resource profileRefreshOperation 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
+  name: 'refresh-profile'
+  parent: profileAdminApi
+  properties: {
+    description: 'Reload, validate, and asynchronously replace one cached Gateway Routing Profile.'
+    displayName: 'Refresh profile'
+    method: 'POST'
+    request: {
+      representations: [
+        {
+          contentType: 'application/json'
+        }
+      ]
+    }
+    responses: [
+      {
+        description: 'Refresh accepted for asynchronous cache replacement'
+        statusCode: 202
+      }
+      {
+        description: 'Invalid Profile Key'
+        statusCode: 400
+      }
+      {
+        description: 'Profile missing or invalid'
+        statusCode: 500
+      }
+      {
+        description: 'Profile source unavailable'
+        statusCode: 503
+      }
+    ]
+    templateParameters: [
+      {
+        description: 'Profile Key to reload'
+        name: 'profileKey'
+        required: true
+        type: 'string'
+        values: []
+      }
+    ]
+    urlTemplate: '/{profileKey}/refresh'
+  }
+}
+
 resource profileTableEndpointNamedValue 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
   name: 'ProfileTableEndpoint'
   parent: apim
@@ -305,6 +367,23 @@ resource gatewayDebugHeadersNamedValue 'Microsoft.ApiManagement/service/namedVal
   }
 }
 
+resource resolveProfilePolicyFragment 'Microsoft.ApiManagement/service/policyFragments@2024-05-01' = {
+  name: 'resolve-profile'
+  parent: apim
+  properties: {
+    description: 'Authoritative Table read, validation, normalization, and cache submission for one Gateway Routing Profile.'
+    format: 'rawxml'
+    value: resolveProfileFragment
+  }
+  dependsOn: [
+    profileTableReaderRole
+    profileTableEndpointNamedValue
+    profileTableNameNamedValue
+    profileCacheTtlNamedValue
+    profileLookupTimeoutNamedValue
+  ]
+}
+
 resource chatPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
   name: 'policy'
   parent: chatApi
@@ -321,6 +400,20 @@ resource chatPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' =
     profileCacheTtlNamedValue
     profileLookupTimeoutNamedValue
     gatewayDebugHeadersNamedValue
+    resolveProfilePolicyFragment
+  ]
+}
+
+resource profileRefreshApiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = {
+  name: 'policy'
+  parent: profileAdminApi
+  properties: {
+    format: 'rawxml'
+    value: profileRefreshPolicy
+  }
+  dependsOn: [
+    profileRefreshOperation
+    resolveProfilePolicyFragment
   ]
 }
 
@@ -348,6 +441,34 @@ resource consumerSubscription 'Microsoft.ApiManagement/service/subscriptions@202
     allowTracing: false
     displayName: 'Gateway Consumer Sample'
     scope: consumerProduct.id
+    state: 'active'
+  }
+}
+
+resource profileAdminProduct 'Microsoft.ApiManagement/service/products@2024-05-01' = {
+  name: 'gateway-profile-admin'
+  parent: apim
+  properties: {
+    approvalRequired: false
+    description: 'Administrative access to Profile Refresh'
+    displayName: 'Gateway Profile Administrator'
+    state: 'published'
+    subscriptionRequired: true
+  }
+}
+
+resource profileAdminProductApi 'Microsoft.ApiManagement/service/products/apis@2024-05-01' = {
+  name: profileAdminApi.name
+  parent: profileAdminProduct
+}
+
+resource profileAdminSubscription 'Microsoft.ApiManagement/service/subscriptions@2024-05-01' = {
+  name: 'gateway-profile-admin-sub'
+  parent: apim
+  properties: {
+    allowTracing: false
+    displayName: 'Gateway Profile Administrator Sample'
+    scope: profileAdminProduct.id
     state: 'active'
   }
 }

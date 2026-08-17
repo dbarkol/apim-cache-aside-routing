@@ -1,6 +1,6 @@
 # APIM cache-aside routing
 
-This reference solution deploys a subscription-protected APIM Basic v2 chat operation that resolves a version-one Gateway Routing Profile from Azure Table Storage, caches its validated normalized form, and applies its backend and TPM configuration.
+This reference solution deploys an APIM Basic v2 chat operation that resolves a version-one Gateway Routing Profile from Azure Table Storage, plus a separately protected Profile Refresh operation that validates and asynchronously replaces one cached profile.
 
 ## Prerequisites
 
@@ -52,6 +52,12 @@ Provisioning idempotently replaces this sample entity:
 
 Unknown optional Table properties are ignored. The required fields are validated and normalized to `schemaVersion`, `backendId`, and `maxTpm` before the compact JSON is cached. Each row may configure any positive 32-bit integer `MaxTpm`; APIM applies that exact value to the row's token-limit counter.
 
+## Refresh one profile
+
+`POST /internal/profiles/{profileKey}/refresh` is available only through the dedicated `gateway-profile-admin` product and its separate sample subscription. The operation validates the Profile Key, point-reads Table Storage with managed identity, applies the same validation and normalization fragment as a runtime cache miss, and submits only the normalized profile to APIM's built-in cache.
+
+A successful request returns `202 Accepted`. APIM cache storage is asynchronous, so the response does not claim that the replacement is immediately visible. The operation never writes to the source Table entity. Bulk warming remains external automation that invokes this single-key operation once per known key.
+
 ## Validate and smoke test
 
 Run the fast local artifact check:
@@ -68,9 +74,9 @@ After `azd up` completes, explicitly run the core public black-box suite:
 
 The sample chat operation reads `x-profile-key` as a test adapter. It is not a production trust boundary; production callers should receive a Profile Key derived from validated identity and request context.
 
-The suite retrieves the generated APIM subscription secret through the authenticated management API and uses temporary, uniquely named Table rows. It proves a model response, cache miss followed by cache hit, `gpt-4o-mini` backend selection, the 8000 TPM branch, Profile Key validation, malformed and missing profile rejection, unknown-backend failure, per-key cold-lookup throttling, sanitized errors, and immediate recovery after a missing or invalid row is corrected. Temporary rows and settings are restored during cleanup.
+The suite retrieves the generated consumer and administrator APIM subscription secrets through the authenticated management API and uses temporary, uniquely named Table rows. It proves a model response, cache miss followed by cache hit, `gpt-4o-mini` backend selection, the 8000 TPM branch, Profile Key validation, malformed and missing profile rejection, unknown-backend failure, per-key cold-lookup throttling, sanitized errors, immediate recovery after a missing or invalid row is corrected, refresh authorization, source immutability, and eventual visibility of a refreshed profile. Temporary rows and settings are restored during cleanup.
 
-Dependency-fault testing temporarily replaces the APIM Table endpoint named value, verifies the sanitized `503` contract, and restores the original value. Run the complete issue #4 error contract explicitly:
+Dependency-fault testing temporarily replaces the APIM Table endpoint named value, verifies the sanitized `503` contract for runtime resolution and Profile Refresh, and restores the original value. Run the complete dependency error contract explicitly:
 
 ```bash
 ./scripts/test.sh --faults

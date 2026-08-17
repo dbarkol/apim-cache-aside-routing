@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/tests/test-helpers.sh"
 
 initialize_test_context
+admin_subscription_key="$(get_subscription_key gateway-profile-admin-sub)"
 profile_table_endpoint_resource_id="/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.ApiManagement/service/${apim_name}/namedValues/ProfileTableEndpoint"
 original_table_endpoint="$(
   az rest \
@@ -44,6 +45,8 @@ sleep 30
 
 fault_profile_key="issue4-source-failure-$(date +%s)-${RANDOM}"
 status_code="$(send_chat_request "$fault_profile_key")"
+assert_error_response 503 RoutingDependencyUnavailable "$fault_profile_key" "profile-source.invalid"
+status_code="$(send_refresh_request "$admin_subscription_key" "$fault_profile_key")"
 assert_error_response 503 RoutingDependencyUnavailable "$fault_profile_key" "profile-source.invalid"
 
 az rest \

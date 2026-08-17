@@ -1,0 +1,98 @@
+<fragment>
+  <!-- Point-read the version-one Table entity with APIM's managed identity. -->
+  <send-request mode="new" response-variable-name="profileResponse" timeout="{{ProfileLookupTimeoutSeconds}}" ignore-error="true">
+    <set-url>@("{{ProfileTableEndpoint}}/{{ProfileTableName}}(PartitionKey='profiles-v1',RowKey='" + (string)context.Variables["profileKey"] + "')")</set-url>
+    <set-method>GET</set-method>
+    <set-header name="Accept" exists-action="override">
+      <value>application/json;odata=nometadata</value>
+    </set-header>
+    <set-header name="x-ms-version" exists-action="override">
+      <value>2019-02-02</value>
+    </set-header>
+    <authentication-managed-identity resource="https://storage.azure.com/" ignore-error="false" />
+  </send-request>
+  <!--
+    Classify source failures before parsing:
+    null means the request failed or timed out, 404 means no profile exists,
+    and other non-200 responses are temporary source failures.
+  -->
+  <choose>
+    <!-- Condition: send-request produced no response, which represents a timeout or transport failure. -->
+    <when condition='@(!context.Variables.ContainsKey("profileResponse") || context.Variables["profileResponse"] == null)'>
+      <return-response>
+        <set-status code="503" reason="Service Unavailable" />
+        <set-header name="Content-Type" exists-action="override">
+          <value>application/json</value>
+        </set-header>
+        <set-body>@("{\"error\":{\"code\":\"RoutingDependencyUnavailable\",\"message\":\"The service is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+      </return-response>
+    </when>
+    <!-- Condition: Table Storage returned 404, so the requested profile does not exist. -->
+    <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode == 404)'>
+      <return-response>
+        <set-status code="500" reason="Internal Server Error" />
+        <set-header name="Content-Type" exists-action="override">
+          <value>application/json</value>
+        </set-header>
+        <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+      </return-response>
+    </when>
+    <!-- Condition: any remaining non-200 result is a temporary Table service or authorization failure. -->
+    <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode != 200)'>
+      <return-response>
+        <set-status code="503" reason="Service Unavailable" />
+        <set-header name="Content-Type" exists-action="override">
+          <value>application/json</value>
+        </set-header>
+        <set-body>@("{\"error\":{\"code\":\"RoutingDependencyUnavailable\",\"message\":\"The service is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+      </return-response>
+    </when>
+  </choose>
+  <!--
+    Validate required version-one fields and ignore unknown optional properties.
+    MaxTpm is row-configurable: any positive Int32 value is accepted and applied.
+    The result is compact JSON containing only schemaVersion, backendId, and maxTpm.
+  -->
+  <set-variable name="normalizedProfile" value='@{
+    var entity = ((IResponse)context.Variables["profileResponse"]).Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
+    var schemaVersion = entity["SchemaVersion"];
+    var backendId = entity["BackendId"];
+    var maxTpm = entity["MaxTpm"];
+    var valid = entity["PartitionKey"]?.ToString() == "profiles-v1"
+      &amp;&amp; entity["RowKey"]?.ToString() == (string)context.Variables["profileKey"]
+      &amp;&amp; schemaVersion != null
+      &amp;&amp; schemaVersion.Type == Newtonsoft.Json.Linq.JTokenType.Integer
+      &amp;&amp; (int)schemaVersion == 1
+      &amp;&amp; backendId != null
+      &amp;&amp; backendId.Type == Newtonsoft.Json.Linq.JTokenType.String
+      &amp;&amp; System.Text.RegularExpressions.Regex.IsMatch(backendId.ToString(), "^[A-Za-z0-9._-]{1,80}$")
+      &amp;&amp; maxTpm != null
+      &amp;&amp; maxTpm.Type == Newtonsoft.Json.Linq.JTokenType.Integer
+      &amp;&amp; (long)maxTpm > 0
+      &amp;&amp; (long)maxTpm &lt;= System.Int32.MaxValue;
+    if (!valid)
+    {
+      return "";
+    }
+    return new Newtonsoft.Json.Linq.JObject(
+      new Newtonsoft.Json.Linq.JProperty("schemaVersion", 1),
+      new Newtonsoft.Json.Linq.JProperty("backendId", backendId.ToString()),
+      new Newtonsoft.Json.Linq.JProperty("maxTpm", (int)maxTpm)
+    ).ToString(Newtonsoft.Json.Formatting.None);
+  }' />
+  <!-- Stop before caching when normalization reports any schema or field validation failure. -->
+  <choose>
+    <!-- Condition: validation returned the empty sentinel instead of a safe normalized profile. -->
+    <when condition='@((string)context.Variables["normalizedProfile"] == "")'>
+      <return-response>
+        <set-status code="500" reason="Internal Server Error" />
+        <set-header name="Content-Type" exists-action="override">
+          <value>application/json</value>
+        </set-header>
+        <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+      </return-response>
+    </when>
+  </choose>
+  <!-- Cache replacement is asynchronous; callers must not assume immediate visibility. -->
+  <cache-store-value key='@((string)context.Variables["profileKey"])' value='@((string)context.Variables["normalizedProfile"])' duration="{{ProfileCacheTtlSeconds}}" caching-type="internal" />
+</fragment>

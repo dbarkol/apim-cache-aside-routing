@@ -14,6 +14,7 @@ fi
 "$repo_root/tests/predeploy.sh"
 "$repo_root/scripts/smoke.sh"
 "$repo_root/tests/api-contract.sh"
+"$repo_root/tests/refresh.sh"
 
 if [[ "$run_faults" == true ]]; then
   "$repo_root/tests/faults.sh"

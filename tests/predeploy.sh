@@ -23,12 +23,39 @@ jq -e '
   and ([.. | objects | select(.type? == "Microsoft.CognitiveServices/accounts/deployments")][0].sku.capacity == 1)
   and ([.. | objects | select(.type? == "Microsoft.Authorization/roleAssignments")] | length >= 1)
   and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/namedValues")] | length >= 5)
-  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis")] | length == 1)
-  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis/operations")] | length == 1)
-  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/products")] | length == 1)
-  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/subscriptions")] | length == 1)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis")] | length == 2)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis/operations")] | length == 2)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/apis/policies")] | length == 2)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/policyFragments")] | length == 1)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/products")] | length == 2)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/products/apis")] | length == 2)
+  and ([.. | objects | select(.type? == "Microsoft.ApiManagement/service/subscriptions")] | length == 2)
   and ([.outputs | to_entries[] | .key | ascii_downcase | test("key|secret|token")] | any | not)
 ' "$template_file" >/dev/null
+
+grep -q '<fragment>' "$repo_root/policies/shared/resolve-profile.xml"
+grep -q '<cache-store-value' "$repo_root/policies/shared/resolve-profile.xml"
+grep -q 'https://storage.azure.com/' "$repo_root/policies/shared/resolve-profile.xml"
+grep -q "PartitionKey='profiles-v1'" "$repo_root/policies/shared/resolve-profile.xml"
+grep -q 'schemaVersion' "$repo_root/policies/shared/resolve-profile.xml"
+grep -q 'backendId' "$repo_root/policies/shared/resolve-profile.xml"
+grep -q 'maxTpm' "$repo_root/policies/shared/resolve-profile.xml"
+if grep -q '<retry' "$repo_root/policies/shared/resolve-profile.xml"; then
+  echo "Table profile reads must not retry: $repo_root/policies/shared/resolve-profile.xml" >&2
+  exit 1
+fi
+grep -q 'include-fragment fragment-id="resolve-profile"' \
+  "$repo_root/policies/chat/azure-openai-token-limit.xml"
+grep -q 'include-fragment fragment-id="resolve-profile"' \
+  "$repo_root/policies/chat/llm-token-limit.xml"
+grep -q 'context.Request.MatchedParameters.GetValueOrDefault("profileKey", "")' \
+  "$repo_root/policies/admin/profile-refresh.xml"
+grep -q 'context.LastError.Reason == "SubscriptionKeyInvalid"' \
+  "$repo_root/policies/admin/profile-refresh.xml"
+grep -q '<set-status code="202" reason="Accepted" />' \
+  "$repo_root/policies/admin/profile-refresh.xml"
+grep -q 'include-fragment fragment-id="resolve-profile"' \
+  "$repo_root/policies/admin/profile-refresh.xml"
 
 grep -q 'resource="https://cognitiveservices.azure.com"' \
   "$repo_root/policies/chat/azure-openai-token-limit.xml"
@@ -40,10 +67,7 @@ for policy_file in \
   grep -q 'cache-lookup-value' "$policy_file"
   grep -q '<rate-limit-by-key calls="10" renewal-period="60"' "$policy_file"
   grep -q 'id="profile-miss-rate-limit"' "$policy_file"
-  grep -q 'cache-store-value' "$policy_file"
-  grep -q 'https://storage.azure.com/' "$policy_file"
-  grep -q "PartitionKey='profiles-v1'" "$policy_file"
-  grep -q 'schemaVersion' "$policy_file"
+  grep -q 'include-fragment fragment-id="resolve-profile"' "$policy_file"
   grep -q 'backendId' "$policy_file"
   grep -q 'maxTpm' "$policy_file"
   grep -q 'tokens-per-minute='"'"'@((int)context.Variables\["maxTpm"\])'"'"'' "$policy_file"
@@ -58,10 +82,6 @@ for policy_file in \
   grep -q 'RoutingConfigurationUnavailable' "$policy_file"
   if grep -Eq 'ProfileNotFound|InvalidProfile' "$policy_file"; then
     echo "Stored profile failures must use the generic client error contract: $policy_file" >&2
-    exit 1
-  fi
-  if grep -q '<retry' "$policy_file"; then
-    echo "Table profile reads must not retry: $policy_file" >&2
     exit 1
   fi
 done
@@ -90,9 +110,16 @@ grep -q 'assert_error_response 400 InvalidRequest' "$repo_root/tests/api-contrac
 grep -q 'assert_error_response 429 TooManyRequests' "$repo_root/tests/api-contract.sh"
 grep -q 'assert_error_response 500 RoutingConfigurationUnavailable' "$repo_root/tests/api-contract.sh"
 grep -q 'assert_error_response 503 RoutingDependencyUnavailable' "$repo_root/tests/faults.sh"
+grep -q 'send_refresh_request "$consumer_subscription_key"' "$repo_root/tests/refresh.sh"
+grep -q 'send_refresh_request "$admin_subscription_key"' "$repo_root/tests/refresh.sh"
+grep -q 'assert_error_response 400 InvalidRequest' "$repo_root/tests/refresh.sh"
+grep -q 'assert_error_response 500 RoutingConfigurationUnavailable' "$repo_root/tests/refresh.sh"
+grep -q 'wait_for_cached_profile_tpm 9000' "$repo_root/tests/refresh.sh"
+grep -q 'send_refresh_request "$admin_subscription_key"' "$repo_root/tests/faults.sh"
 grep -q 'newly created profiles are immediately eligible' "$repo_root/tests/api-contract.sh"
 grep -q 'corrected profiles are immediately eligible' "$repo_root/tests/api-contract.sh"
 grep -q './scripts/smoke.sh' "$repo_root/scripts/test.sh"
 grep -q './tests/api-contract.sh' "$repo_root/scripts/test.sh"
+grep -q './tests/refresh.sh' "$repo_root/scripts/test.sh"
 
 echo "Predeployment contract is valid."

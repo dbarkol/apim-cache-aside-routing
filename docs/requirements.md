@@ -127,7 +127,7 @@ All rows use `PartitionKey=profiles-v1` and `SchemaVersion=1`.
 2. Provision a separate internal Profile Refresh API.
 3. Create separate APIM products and subscriptions:
    - `gateway-consumer` for the chat API.
-   - `gateway-admin` for the refresh API.
+   - `gateway-profile-admin` for the refresh API.
 4. Both APIs must require their corresponding APIM subscription key.
 
 ### Profile Refresh
@@ -189,6 +189,8 @@ Client errors must be generic, include a correlation ID, and expose neither the 
    - Round-robin pool participation using aggregated gateway logs.
    - Priority-pool normal routing and overflow under an opt-in induced failure.
    - Profile Refresh returning `202`.
+   - The consumer subscription being unable to invoke Profile Refresh.
+   - Eventual observation of a refreshed cached profile without modifying its source row.
 5. Round-robin tests must not assert strict alternation or an exact 50/50 split.
 6. Priority tests must not assert an exact failover request count or timing because APIM circuit-breaker state is distributed and approximate.
 

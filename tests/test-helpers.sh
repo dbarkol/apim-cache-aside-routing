@@ -19,16 +19,7 @@ initialize_test_context() {
   storage_account_name="$(azd env get-value STORAGE_ACCOUNT_NAME)"
   subscription_id="$(az account show --query id --output tsv --only-show-errors)"
   api_version="2024-05-01"
-  subscription_resource_id="/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.ApiManagement/service/${apim_name}/subscriptions/gateway-consumer-sub"
-
-  subscription_key="$(
-    az rest \
-      --method post \
-      --url "https://management.azure.com${subscription_resource_id}/listSecrets?api-version=${api_version}" \
-      --query primaryKey \
-      --output tsv \
-      --only-show-errors
-  )"
+  consumer_subscription_key="$(get_subscription_key gateway-consumer-sub)"
   storage_access_token="$(
     az account get-access-token \
       --resource https://storage.azure.com/ \
@@ -37,7 +28,7 @@ initialize_test_context() {
       --only-show-errors
   )"
 
-  if [[ -z "$subscription_key" || -z "$storage_access_token" ]]; then
+  if [[ -z "$consumer_subscription_key" || -z "$storage_access_token" ]]; then
     echo "Required APIM or Table Storage test credentials could not be retrieved." >&2
     exit 1
   fi
@@ -46,6 +37,18 @@ initialize_test_context() {
   headers_file="$(mktemp)"
   normalized_headers_file="$(mktemp)"
   request_body='{"messages":[{"role":"user","content":"Reply with exactly: routing profile ready"}],"max_tokens":20,"temperature":0}'
+}
+
+get_subscription_key() {
+  local subscription_name="$1"
+  local subscription_resource_id="/subscriptions/${subscription_id}/resourceGroups/${resource_group}/providers/Microsoft.ApiManagement/service/${apim_name}/subscriptions/${subscription_name}"
+
+  az rest \
+    --method post \
+    --url "https://management.azure.com${subscription_resource_id}/listSecrets?api-version=${api_version}" \
+    --query primaryKey \
+    --output tsv \
+    --only-show-errors
 }
 
 cleanup_test_files() {
@@ -88,15 +91,28 @@ table_delete_profile() {
     "$(profile_entity_url "$profile_key")" >/dev/null 2>&1 || true
 }
 
+table_get_profile() {
+  local profile_key="$1"
+
+  az rest \
+    --method get \
+    --url "$(profile_entity_url "$profile_key")" \
+    --resource https://storage.azure.com/ \
+    --headers "Accept=application/json;odata=nometadata" x-ms-version=2019-02-02 \
+    --output json \
+    --only-show-errors
+}
+
 valid_profile_body() {
   local profile_key="$1"
-  jq -cn --arg profile_key "$profile_key" '{
+  local max_tpm="${2:-8000}"
+  jq -cn --arg profile_key "$profile_key" --argjson max_tpm "$max_tpm" '{
     PartitionKey: "profiles-v1",
     RowKey: $profile_key,
     SchemaVersion: 1,
     "SchemaVersion@odata.type": "Edm.Int32",
     BackendId: "gpt-4o-mini",
-    MaxTpm: 8000,
+    MaxTpm: $max_tpm,
     "MaxTpm@odata.type": "Edm.Int32"
   }'
 }
@@ -113,7 +129,7 @@ send_chat_request() {
     --write-out '%{http_code}'
     --request POST
     --header "Content-Type: application/json"
-    --header "Ocp-Apim-Subscription-Key: ${subscription_key}"
+    --header "Ocp-Apim-Subscription-Key: ${consumer_subscription_key}"
     --data "$request_body"
   )
 
@@ -122,6 +138,24 @@ send_chat_request() {
   fi
 
   curl "${curl_arguments[@]}" "${gateway_url}/openai/chat/completions"
+}
+
+send_refresh_request() {
+  local request_subscription_key="$1"
+  local profile_key="$2"
+
+  curl \
+    --silent \
+    --show-error \
+    --connect-timeout 15 \
+    --max-time 45 \
+    --output "$response_file" \
+    --dump-header "$headers_file" \
+    --write-out '%{http_code}' \
+    --request POST \
+    --header "Content-Type: application/json" \
+    --header "Ocp-Apim-Subscription-Key: ${request_subscription_key}" \
+    "${gateway_url}/internal/profiles/${profile_key}/refresh"
 }
 
 assert_error_response() {

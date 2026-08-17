@@ -94,7 +94,7 @@ The refresh and runtime paths are read-only against Table Storage. Profile write
 The sample provisions two APIM products:
 
 - `gateway-consumer`: grants access to the chat API.
-- `gateway-admin`: grants access to the Profile Refresh API.
+- `gateway-profile-admin`: grants access to the Profile Refresh API.
 
 Subscription secrets are not emitted as Bicep outputs. The on-demand test command retrieves required secrets through authenticated Azure management operations.
 
@@ -204,7 +204,7 @@ The API-scope policy calls:
   variable-name="gatewayRoutingProfile" />
 ```
 
-`cache-lookup-value` cannot be packaged inside a policy fragment. The solution therefore deploys complete API-scope policy XML, with lookup, validation, and application organized into clearly separated blocks.
+The chat policy owns `cache-lookup-value` because refresh must always bypass the existing cached value. On a runtime miss, the chat policy and the refresh policy both include the `resolve-profile` fragment, which owns the authoritative Table point read, source-failure classification, validation, normalization, and asynchronous cache submission.
 
 ### Miss path
 
@@ -295,6 +295,10 @@ sequenceDiagram
     R-->>A: 202 Accepted
 ```
 
+The protected operation is `POST /internal/profiles/{profileKey}/refresh`. Only subscriptions for the dedicated `gateway-profile-admin` product can invoke it; a consumer subscription is rejected before inbound refresh processing.
+
+The `202` response confirms that the source profile was validated and submitted to the asynchronous cache store. It does not claim immediate cache visibility. The operation performs only a managed-identity `GET` against Table Storage and never modifies the source entity.
+
 The operation reloads one profile only. Bulk warming is external automation that enumerates known keys and calls the operation once per key.
 
 ## Named values
@@ -381,11 +385,13 @@ Test execution is never an automatic post-deploy hook.
 │   ├── main.parameters.json
 │   └── modules/
 ├── policies/
+│   ├── admin/
+│   │   └── profile-refresh.xml
 │   ├── chat/
 │   │   ├── azure-openai-token-limit.xml
 │   │   └── llm-token-limit.xml
-│   └── refresh/
-│       └── policy.xml
+│   └── shared/
+│       └── resolve-profile.xml
 ├── scripts/
 │   ├── seed-profiles.*
 │   └── test.*
@@ -405,6 +411,7 @@ Exact script language and module decomposition are implementation decisions, pro
 | Stage | Failure | Result |
 |---|---|---|
 | Input | Missing/invalid Profile Key | 400 |
+| Authorization | Consumer or invalid subscription | 403 |
 | Cache | Lookup unavailable | Continue as miss |
 | Miss protection | Limit exceeded | 429 |
 | Table | Timeout/service error | 503 |
@@ -426,10 +433,11 @@ Core tests:
 3. Verify configured backend ID.
 4. Verify 500, 503, 429, and 400 mappings.
 5. Verify non-positive, overflowing, and invalid-type TPM rejection.
-6. Verify refresh returns 202.
-7. Query Log Analytics to confirm both nano pool members participate over an aggregate sample.
-8. Confirm priority-1 handles healthy traffic.
-9. Under an opt-in induced failure, confirm priority-2 eventually receives traffic.
+6. Verify refresh rejects the consumer subscription and returns 202 to the administrator subscription.
+7. Update a dedicated source row and eventually observe the refreshed cached TPM value without a source mutation.
+8. Query Log Analytics to confirm both nano pool members participate over an aggregate sample.
+9. Confirm priority-1 handles healthy traffic.
+10. Under an opt-in induced failure, confirm priority-2 eventually receives traffic.
 
 ## Security boundaries
 
