@@ -60,15 +60,23 @@ Run the fast local artifact check:
 ./scripts/validate.sh
 ```
 
-After `azd up` completes, explicitly run the public black-box smoke path:
+After `azd up` completes, explicitly run the core public black-box suite:
 
 ```bash
-./scripts/smoke.sh
+./scripts/test.sh
 ```
 
 The sample chat operation reads `x-profile-key` as a test adapter. It is not a production trust boundary; production callers should receive a Profile Key derived from validated identity and request context.
 
-The smoke script retrieves the generated APIM subscription secret through the authenticated management API, temporarily enables non-secret diagnostic headers, and proves a model response, a cache miss followed by a hit, `gpt-4o-mini` backend selection, and the 8000 TPM branch. Run it immediately after deployment or after the configured cache TTL has expired.
+The suite retrieves the generated APIM subscription secret through the authenticated management API and uses temporary, uniquely named Table rows. It proves a model response, cache miss followed by cache hit, `gpt-4o-mini` backend selection, the 8000 TPM branch, Profile Key validation, malformed and missing profile rejection, unknown-backend failure, per-key cold-lookup throttling, sanitized errors, and immediate recovery after a missing or invalid row is corrected. Temporary rows and settings are restored during cleanup.
+
+Dependency-fault testing temporarily replaces the APIM Table endpoint named value, verifies the sanitized `503` contract, and restores the original value. Run the complete issue #4 error contract explicitly:
+
+```bash
+./scripts/test.sh --faults
+```
+
+Client-visible failures contain only a generic code and message plus the APIM correlation identifier. They do not expose Profile Keys, stored profile content, validation details, credentials, or backend configuration.
 
 No Foundry key or subscription secret is stored in source or emitted by Bicep. Public endpoints are intentional in this reference slice. Private networking and production caller authentication are deferred.
 

@@ -44,6 +44,10 @@ xmllint --noout \
 bash -n "$repo_root/scripts/preflight.sh"
 bash -n "$repo_root/scripts/seed-profile.sh"
 bash -n "$repo_root/scripts/smoke.sh"
+bash -n "$repo_root/scripts/test.sh"
+bash -n "$repo_root/tests/test-helpers.sh"
+bash -n "$repo_root/tests/api-contract.sh"
+bash -n "$repo_root/tests/faults.sh"
 azd show --output json >/dev/null
 
 echo "Azure Developer CLI, Bicep, policy XML, and scripts are valid."

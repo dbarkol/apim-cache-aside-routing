@@ -38,6 +38,8 @@ for policy_file in \
   "$repo_root/policies/chat/llm-token-limit.xml"; do
   grep -q 'x-profile-key' "$policy_file"
   grep -q 'cache-lookup-value' "$policy_file"
+  grep -q '<rate-limit-by-key calls="10" renewal-period="60"' "$policy_file"
+  grep -q 'id="profile-miss-rate-limit"' "$policy_file"
   grep -q 'cache-store-value' "$policy_file"
   grep -q 'https://storage.azure.com/' "$policy_file"
   grep -q "PartitionKey='profiles-v1'" "$policy_file"
@@ -50,6 +52,18 @@ for policy_file in \
     exit 1
   fi
   grep -q 'backend-id='"'"'@((string)context.Variables\["backendId"\])'"'"'' "$policy_file"
+  grep -q 'id="apply-profile-backend"' "$policy_file"
+  grep -q 'context.LastError.PolicyId == "profile-miss-rate-limit"' "$policy_file"
+  grep -q '<set-status code="429" reason="Too Many Requests" />' "$policy_file"
+  grep -q 'RoutingConfigurationUnavailable' "$policy_file"
+  if grep -Eq 'ProfileNotFound|InvalidProfile' "$policy_file"; then
+    echo "Stored profile failures must use the generic client error contract: $policy_file" >&2
+    exit 1
+  fi
+  if grep -q '<retry' "$policy_file"; then
+    echo "Table profile reads must not retry: $policy_file" >&2
+    exit 1
+  fi
 done
 
 grep -q '<azure-openai-token-limit' \
@@ -66,11 +80,19 @@ grep -q 'deployer().objectId' "$repo_root/infra/main.bicep"
 grep -q "SecurityControl: 'Ignore'" "$repo_root/infra/resources.bicep"
 grep -q "tokenLimitPolicyVariant string = 'azure-openai-token-limit'" \
   "$repo_root/infra/main.bicep"
-grep -q 'x-profile-key: lob1-gpt4o-mini' "$repo_root/scripts/smoke.sh"
+grep -q 'smoke_profile_key=' "$repo_root/scripts/smoke.sh"
 grep -q 'assert_profile_headers miss' "$repo_root/scripts/smoke.sh"
 grep -q 'assert_profile_headers hit' "$repo_root/scripts/smoke.sh"
 grep -q 'x-profile-cache:' "$repo_root/scripts/smoke.sh"
 grep -q 'x-backend-id: gpt-4o-mini' "$repo_root/scripts/smoke.sh"
 grep -q 'x-token-limit-tpm: 8000' "$repo_root/scripts/smoke.sh"
+grep -q 'assert_error_response 400 InvalidRequest' "$repo_root/tests/api-contract.sh"
+grep -q 'assert_error_response 429 TooManyRequests' "$repo_root/tests/api-contract.sh"
+grep -q 'assert_error_response 500 RoutingConfigurationUnavailable' "$repo_root/tests/api-contract.sh"
+grep -q 'assert_error_response 503 RoutingDependencyUnavailable' "$repo_root/tests/faults.sh"
+grep -q 'newly created profiles are immediately eligible' "$repo_root/tests/api-contract.sh"
+grep -q 'corrected profiles are immediately eligible' "$repo_root/tests/api-contract.sh"
+grep -q './scripts/smoke.sh' "$repo_root/scripts/test.sh"
+grep -q './tests/api-contract.sh' "$repo_root/scripts/test.sh"
 
 echo "Predeployment contract is valid."

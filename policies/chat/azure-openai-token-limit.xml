@@ -19,7 +19,7 @@
           <set-header name="Content-Type" exists-action="override">
             <value>application/json</value>
           </set-header>
-          <set-body>@("{\"error\":{\"code\":\"InvalidProfileKey\",\"message\":\"A valid routing profile is required.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+          <set-body>@("{\"error\":{\"code\":\"InvalidRequest\",\"message\":\"The request is invalid.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
         </return-response>
       </when>
     </choose>
@@ -34,6 +34,7 @@
       <otherwise>
         <!-- On a miss, point-read the version-one Table entity with APIM's managed identity. -->
         <set-variable name="profileCacheOutcome" value="miss" />
+        <rate-limit-by-key calls="10" renewal-period="60" counter-key='@((string)context.Variables["profileKey"])' id="profile-miss-rate-limit" />
         <send-request mode="new" response-variable-name="profileResponse" timeout="{{ProfileLookupTimeoutSeconds}}" ignore-error="true">
           <set-url>@("{{ProfileTableEndpoint}}/{{ProfileTableName}}(PartitionKey='profiles-v1',RowKey='" + (string)context.Variables["profileKey"] + "')")</set-url>
           <set-method>GET</set-method>
@@ -57,7 +58,7 @@
               <set-header name="Content-Type" exists-action="override">
                 <value>application/json</value>
               </set-header>
-              <set-body>@("{\"error\":{\"code\":\"ProfileSourceUnavailable\",\"message\":\"Routing configuration is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+              <set-body>@("{\"error\":{\"code\":\"RoutingDependencyUnavailable\",\"message\":\"The service is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
           <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode == 404)'>
@@ -66,7 +67,7 @@
               <set-header name="Content-Type" exists-action="override">
                 <value>application/json</value>
               </set-header>
-              <set-body>@("{\"error\":{\"code\":\"ProfileNotFound\",\"message\":\"Routing configuration could not be resolved.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+              <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
           <when condition='@(((IResponse)context.Variables["profileResponse"]).StatusCode != 200)'>
@@ -75,7 +76,7 @@
               <set-header name="Content-Type" exists-action="override">
                 <value>application/json</value>
               </set-header>
-              <set-body>@("{\"error\":{\"code\":\"ProfileSourceUnavailable\",\"message\":\"Routing configuration is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+              <set-body>@("{\"error\":{\"code\":\"RoutingDependencyUnavailable\",\"message\":\"The service is temporarily unavailable.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
         </choose>
@@ -118,7 +119,7 @@
               <set-header name="Content-Type" exists-action="override">
                 <value>application/json</value>
               </set-header>
-              <set-body>@("{\"error\":{\"code\":\"InvalidProfile\",\"message\":\"Routing configuration is invalid.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+              <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
             </return-response>
           </when>
         </choose>
@@ -143,7 +144,7 @@
     <set-query-parameter name="api-version" exists-action="override">
       <value>__OPENAI_API_VERSION__</value>
     </set-query-parameter>
-    <set-backend-service backend-id='@((string)context.Variables["backendId"])' />
+    <set-backend-service backend-id='@((string)context.Variables["backendId"])' id="apply-profile-backend" />
   </inbound>
   <backend>
     <forward-request />
@@ -167,5 +168,25 @@
   </outbound>
   <on-error>
     <base />
+    <choose>
+      <when condition='@(context.LastError.PolicyId == "profile-miss-rate-limit")'>
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@("{\"error\":{\"code\":\"TooManyRequests\",\"message\":\"Too many requests were received.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+        </return-response>
+      </when>
+      <otherwise>
+        <return-response>
+          <set-status code="500" reason="Internal Server Error" />
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json</value>
+          </set-header>
+          <set-body>@("{\"error\":{\"code\":\"RoutingConfigurationUnavailable\",\"message\":\"The request could not be processed.\",\"correlationId\":\"" + context.RequestId + "\"}}")</set-body>
+        </return-response>
+      </otherwise>
+    </choose>
   </on-error>
 </policies>
