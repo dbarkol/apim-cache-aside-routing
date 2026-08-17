@@ -32,7 +32,7 @@ The solution focuses on profile retrieval, caching, validation, and application.
 ### Foundry model deployments
 
 1. Provision five `GlobalStandard` deployments with capacity `1`:
-   - Two `gpt-4.1-nano` deployments.
+   - Two equivalent deployments for the configurable round-robin model.
    - Two `gpt-4.1-mini` deployments.
    - One `gpt-4o-mini` deployment.
 2. Model versions must be configurable, with currently supported versions used as defaults.
@@ -41,7 +41,7 @@ The solution focuses on profile retrieval, caching, validation, and application.
 ### APIM backend topology
 
 1. Create one APIM backend entity for each Foundry model deployment.
-2. Create `nano-pool` from the two `gpt-4.1-nano` backends using round-robin balancing.
+2. Create `nano-pool` from the two equivalent round-robin backends using round-robin balancing.
 3. Create `mini-pool` from the two `gpt-4.1-mini` backends using priority-based routing:
    - Priority 1 represents the primary or PTU-like route.
    - Priority 2 represents pay-as-you-go overflow.

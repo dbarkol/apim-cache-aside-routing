@@ -23,10 +23,12 @@ The repository defaults `AZURE_LOCATION` to `swedencentral`. To use another sing
 azd env set AZURE_LOCATION eastus2
 ```
 
-The default model version is `2024-07-18`. Override it only with a version that the preflight reports as supporting `gpt-4o-mini` `GlobalStandard` in the selected region:
+The single backend and the two equivalent round-robin deployments default to `gpt-4o-mini` version `2024-07-18`. The round-robin model name and version are independently configurable, and preflight requires the selected `GlobalStandard` model and capacity in the chosen region:
 
 ```bash
 azd env set GPT4O_MINI_MODEL_VERSION 2024-07-18
+azd env set ROUND_ROBIN_MODEL_NAME gpt-4o-mini
+azd env set ROUND_ROBIN_MODEL_VERSION 2024-07-18
 ```
 
 The profile cache TTL defaults to 300 seconds, and Table point reads time out after three seconds:
@@ -44,10 +46,13 @@ azd env set TOKEN_LIMIT_POLICY_VARIANT llm-token-limit
 
 The preprovision hook checks regional model availability and remaining quota before Azure deployment begins. It exits with corrective guidance and never selects a fallback region.
 
-Provisioning idempotently replaces this sample entity:
+Provisioning creates the two capacity-one round-robin deployments sequentially, registers managed-identity-authenticated APIM backends for them, and adds both backends to the equal-priority `nano-pool`.
+
+Provisioning idempotently replaces these sample entities:
 
 | PartitionKey | RowKey | SchemaVersion | BackendId | MaxTpm |
 |---|---|---:|---|---:|
+| `profiles-v1` | `test-nano` | 1 | `nano-pool` | 500 |
 | `profiles-v1` | `lob1-gpt4o-mini` | 1 | `gpt-4o-mini` | 8000 |
 
 Unknown optional Table properties are ignored. The required fields are validated and normalized to `schemaVersion`, `backendId`, and `maxTpm` before the compact JSON is cached. Each row may configure any positive 32-bit integer `MaxTpm`; APIM applies that exact value to the row's token-limit counter.
@@ -74,7 +79,7 @@ After `azd up` completes, explicitly run the core public black-box suite:
 
 The sample chat operation reads `x-profile-key` as a test adapter. It is not a production trust boundary; production callers should receive a Profile Key derived from validated identity and request context.
 
-The suite retrieves the generated consumer and administrator APIM subscription secrets through the authenticated management API and uses temporary, uniquely named Table rows. It proves a model response, cache miss followed by cache hit, `gpt-4o-mini` backend selection, the 8000 TPM branch, Profile Key validation, malformed and missing profile rejection, unknown-backend failure, per-key cold-lookup throttling, sanitized errors, immediate recovery after a missing or invalid row is corrected, refresh authorization, source immutability, and eventual visibility of a refreshed profile. Temporary rows and settings are restored during cleanup.
+The suite retrieves the generated consumer and administrator APIM subscription secrets through the authenticated management API and uses temporary, uniquely named Table rows. It proves a model response, cache miss followed by cache hit, `gpt-4o-mini` backend selection, the 8000 TPM branch, Profile Key validation, malformed and missing profile rejection, unknown-backend failure, per-key cold-lookup throttling, sanitized errors, immediate recovery after a missing or invalid row is corrected, refresh authorization, source immutability, and eventual visibility of a refreshed profile. It also sends an aggregate sample through `test-nano` and queries `ApiManagementGatewayLogs.BackendUrl` until both healthy nano pool members have nonzero participation; it does not require a fixed split. Temporary rows and settings are restored during cleanup.
 
 Dependency-fault testing temporarily replaces the APIM Table endpoint named value, verifies the sanitized `503` contract for runtime resolution and Profile Refresh, and restores the original value. Run the complete dependency error contract explicitly:
 

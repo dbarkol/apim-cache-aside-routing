@@ -10,6 +10,10 @@ param resourceToken string
 
 param gpt4oMiniModelVersion string
 
+param roundRobinModelName string
+
+param roundRobinModelVersion string
+
 param openAiApiVersion string
 
 param profileCacheTtlSeconds int
@@ -31,6 +35,8 @@ var foundryProjectName = take('gateway-${environmentName}', 64)
 var logAnalyticsName = 'log-${environmentName}-${resourceToken}'
 var applicationInsightsName = 'appi-${environmentName}-${resourceToken}'
 var gpt4oMiniDeploymentName = 'gpt-4o-mini'
+var roundRobinDeployment1Name = 'round-robin-1'
+var roundRobinDeployment2Name = 'round-robin-2'
 var cognitiveServicesOpenAiUserRoleDefinitionId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
@@ -154,6 +160,48 @@ resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
+resource roundRobinDeployment1 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  name: roundRobinDeployment1Name
+  parent: foundryAccount
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: roundRobinModelName
+      version: roundRobinModelVersion
+    }
+    raiPolicyName: 'Microsoft.Default'
+    versionUpgradeOption: 'OnceCurrentVersionExpired'
+  }
+  dependsOn: [
+    gpt4oMiniDeployment
+  ]
+}
+
+resource roundRobinDeployment2 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  name: roundRobinDeployment2Name
+  parent: foundryAccount
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: roundRobinModelName
+      version: roundRobinModelVersion
+    }
+    raiPolicyName: 'Microsoft.Default'
+    versionUpgradeOption: 'OnceCurrentVersionExpired'
+  }
+  dependsOn: [
+    roundRobinDeployment1
+  ]
+}
+
 resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
   name: apimName
   location: location
@@ -215,6 +263,59 @@ resource modelBackend 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
     gpt4oMiniDeployment
     foundryInferenceRole
   ]
+}
+
+resource roundRobinBackend1 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: roundRobinDeployment1Name
+  parent: apim
+  properties: {
+    description: 'Managed-identity-authenticated first round-robin model deployment'
+    protocol: 'http'
+    title: 'Round-robin model 1'
+    url: 'https://${foundryAccountName}.openai.azure.com/openai/deployments/${roundRobinDeployment1Name}'
+  }
+  dependsOn: [
+    roundRobinDeployment1
+    foundryInferenceRole
+  ]
+}
+
+resource roundRobinBackend2 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: roundRobinDeployment2Name
+  parent: apim
+  properties: {
+    description: 'Managed-identity-authenticated second round-robin model deployment'
+    protocol: 'http'
+    title: 'Round-robin model 2'
+    url: 'https://${foundryAccountName}.openai.azure.com/openai/deployments/${roundRobinDeployment2Name}'
+  }
+  dependsOn: [
+    roundRobinDeployment2
+    foundryInferenceRole
+  ]
+}
+
+resource nanoPool 'Microsoft.ApiManagement/service/backends@2024-05-01' = {
+  name: 'nano-pool'
+  parent: apim
+  properties: {
+    description: 'Round-robin pool of equivalent model deployments'
+    type: 'Pool'
+    pool: {
+      services: [
+        {
+          id: roundRobinBackend1.id
+          priority: 1
+          weight: 1
+        }
+        {
+          id: roundRobinBackend2.id
+          priority: 1
+          weight: 1
+        }
+      ]
+    }
+  }
 }
 
 resource chatApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
@@ -519,12 +620,17 @@ resource apimDiagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-0
       }
     ]
     workspaceId: logAnalytics.id
+    logAnalyticsDestinationType: 'Dedicated'
   }
 }
 
 output apimName string = apim.name
 output apimGatewayUrl string = 'https://${apim.name}.azure-api.net'
+output logAnalyticsName string = logAnalytics.name
 output storageAccountName string = storageAccount.name
 output foundryAccountName string = foundryAccount.name
 output foundryProjectName string = foundryProject.name
 output gpt4oMiniDeploymentName string = gpt4oMiniDeployment.name
+output roundRobinDeployment1Name string = roundRobinDeployment1.name
+output roundRobinDeployment2Name string = roundRobinDeployment2.name
+output nanoPoolBackendId string = nanoPool.name

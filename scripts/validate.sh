@@ -48,6 +48,7 @@ bash -n "$repo_root/scripts/test.sh"
 bash -n "$repo_root/tests/test-helpers.sh"
 bash -n "$repo_root/tests/api-contract.sh"
 bash -n "$repo_root/tests/faults.sh"
+bash -n "$repo_root/tests/round-robin.sh"
 azd show --output json >/dev/null
 
 echo "Azure Developer CLI, Bicep, policy XML, and scripts are valid."

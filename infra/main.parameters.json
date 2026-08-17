@@ -11,6 +11,12 @@
     "gpt4oMiniModelVersion": {
       "value": "${GPT4O_MINI_MODEL_VERSION}"
     },
+    "roundRobinModelName": {
+      "value": "${ROUND_ROBIN_MODEL_NAME}"
+    },
+    "roundRobinModelVersion": {
+      "value": "${ROUND_ROBIN_MODEL_VERSION}"
+    },
     "profileCacheTtlSeconds": {
       "value": "${PROFILE_CACHE_TTL_SECONDS=300}"
     },

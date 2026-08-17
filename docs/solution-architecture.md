@@ -47,8 +47,8 @@ flowchart TB
         Foundry --> Project
 
         subgraph Deployments[GlobalStandard model deployments]
-            NanoA[gpt-4.1-nano A]
-            NanoB[gpt-4.1-nano B]
+            NanoA[Round-robin model A]
+            NanoB[Round-robin model B]
             MiniPrimary[gpt-4.1-mini primary]
             MiniOverflow[gpt-4.1-mini overflow]
             FourOMini[gpt-4o-mini]
@@ -262,7 +262,7 @@ Both variants use the row's `MaxTpm` at runtime and the Profile Key as `counter-
 
 ### Nano pool
 
-`nano-pool` contains two equivalent `gpt-4.1-nano` deployments at the same priority. APIM uses round-robin balancing.
+`nano-pool` contains two equivalent deployments of a configurable model at the same priority. APIM uses round-robin balancing. The reference default is `gpt-4o-mini` because it is available with sufficient `GlobalStandard` quota in the default region.
 
 Balancing is approximate and gateway-instance-local. Tests assert that both members receive traffic over a sufficiently large sample, not strict alternation or an exact split.
 

@@ -10,6 +10,12 @@ param location string = 'swedencentral'
 @description('Supported gpt-4o-mini model version available in the selected region.')
 param gpt4oMiniModelVersion string = '2024-07-18'
 
+@description('Model name used by both equivalent round-robin deployments.')
+param roundRobinModelName string = 'gpt-4o-mini'
+
+@description('Model version used by both equivalent round-robin deployments.')
+param roundRobinModelVersion string = '2024-07-18'
+
 @description('Azure OpenAI data-plane API version used by the APIM policy.')
 param openAiApiVersion string = '2024-10-21'
 
@@ -48,6 +54,8 @@ module solution './resources.bicep' = {
     location: location
     resourceToken: resourceToken
     gpt4oMiniModelVersion: gpt4oMiniModelVersion
+    roundRobinModelName: roundRobinModelName
+    roundRobinModelVersion: roundRobinModelVersion
     openAiApiVersion: openAiApiVersion
     profileCacheTtlSeconds: profileCacheTtlSeconds
     profileLookupTimeoutSeconds: profileLookupTimeoutSeconds
@@ -59,7 +67,11 @@ module solution './resources.bicep' = {
 output AZURE_RESOURCE_GROUP string = resourceGroup.name
 output APIM_NAME string = solution.outputs.apimName
 output APIM_GATEWAY_URL string = solution.outputs.apimGatewayUrl
+output LOG_ANALYTICS_NAME string = solution.outputs.logAnalyticsName
 output STORAGE_ACCOUNT_NAME string = solution.outputs.storageAccountName
 output FOUNDRY_ACCOUNT_NAME string = solution.outputs.foundryAccountName
 output FOUNDRY_PROJECT_NAME string = solution.outputs.foundryProjectName
 output GPT4O_MINI_DEPLOYMENT_NAME string = solution.outputs.gpt4oMiniDeploymentName
+output ROUND_ROBIN_DEPLOYMENT_1_NAME string = solution.outputs.roundRobinDeployment1Name
+output ROUND_ROBIN_DEPLOYMENT_2_NAME string = solution.outputs.roundRobinDeployment2Name
+output NANO_POOL_BACKEND_ID string = solution.outputs.nanoPoolBackendId
