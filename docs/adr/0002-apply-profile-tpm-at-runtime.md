@@ -1,0 +1,3 @@
+# Apply each profile's TPM Limit at runtime
+
+Gateway Routing Profiles store `MaxTpm` as a positive integer and both APIM token-limit policy variants apply that row-specific value through a policy expression, rather than restricting profiles to a deployed allowlist of literal tiers. This keeps token governance independently configurable per Profile Key without APIM policy redeployment; the expression behavior was validated by deploying and exercising both `azure-openai-token-limit` and `llm-token-limit`, because current Microsoft Learn attribute tables do not explicitly document expression support for `tokens-per-minute`.
