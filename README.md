@@ -50,7 +50,7 @@ Provisioning idempotently replaces this sample entity:
 |---|---|---:|---|---:|
 | `profiles-v1` | `lob1-gpt4o-mini` | 1 | `gpt-4o-mini` | 8000 |
 
-Unknown optional Table properties are ignored. The required fields are validated and normalized to `schemaVersion`, `backendId`, and `maxTpm` before the compact JSON is cached.
+Unknown optional Table properties are ignored. The required fields are validated and normalized to `schemaVersion`, `backendId`, and `maxTpm` before the compact JSON is cached. Each row may configure any positive 32-bit integer `MaxTpm`; APIM applies that exact value to the row's token-limit counter.
 
 ## Validate and smoke test
 

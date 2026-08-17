@@ -1,4 +1,13 @@
 <policies>
+  <!--
+    Gateway Routing Profile pipeline:
+    1. Validate the request's test Profile Key adapter.
+    2. Resolve compact normalized JSON from cache or Table Storage.
+    3. Apply the row's BackendId and MaxTpm to this request.
+
+    This file intentionally mirrors azure-openai-token-limit.xml except for the
+    token-limit policy element so the stored profile contract remains unchanged.
+  -->
   <inbound>
     <base />
     <!-- Test adapter: production gateways should derive the Profile Key from trusted identity and request context. -->
@@ -18,6 +27,7 @@
     <cache-lookup-value key='@((string)context.Variables["profileKey"])' variable-name="cachedProfile" caching-type="internal" />
     <choose>
       <when condition='@(context.Variables.ContainsKey("cachedProfile"))'>
+        <!-- Cache hits already contain only the normalized fields produced by the miss path. -->
         <set-variable name="profileCacheOutcome" value="hit" />
         <set-variable name="normalizedProfile" value='@((string)context.Variables["cachedProfile"])' />
       </when>
@@ -35,6 +45,11 @@
           </set-header>
           <authentication-managed-identity resource="https://storage.azure.com/" ignore-error="false" />
         </send-request>
+        <!--
+          Classify source failures before parsing:
+          null means the request failed or timed out, 404 means no profile exists,
+          and other non-200 responses are temporary source failures.
+        -->
         <choose>
           <when condition='@(!context.Variables.ContainsKey("profileResponse") || context.Variables["profileResponse"] == null)'>
             <return-response>
@@ -64,7 +79,11 @@
             </return-response>
           </when>
         </choose>
-        <!-- Validate the stored schema and reduce it to the stable cache/application contract. -->
+        <!--
+          Validate required version-one fields and ignore unknown optional properties.
+          MaxTpm is row-configurable: any positive Int32 value is accepted and applied.
+          The result is compact JSON containing only schemaVersion, backendId, and maxTpm.
+        -->
         <set-variable name="normalizedProfile" value='@{
           var entity = ((IResponse)context.Variables["profileResponse"]).Body.As&lt;Newtonsoft.Json.Linq.JObject&gt;(preserveContent: true);
           var schemaVersion = entity["SchemaVersion"];
@@ -80,7 +99,8 @@
             &amp;&amp; System.Text.RegularExpressions.Regex.IsMatch(backendId.ToString(), "^[A-Za-z0-9._-]{1,80}$")
             &amp;&amp; maxTpm != null
             &amp;&amp; maxTpm.Type == Newtonsoft.Json.Linq.JTokenType.Integer
-            &amp;&amp; ((int)maxTpm == 500 || (int)maxTpm == 4000 || (int)maxTpm == 8000);
+            &amp;&amp; (long)maxTpm > 0
+            &amp;&amp; (long)maxTpm &lt;= System.Int32.MaxValue;
           if (!valid)
           {
             return "";
@@ -106,23 +126,14 @@
         <cache-store-value key='@((string)context.Variables["profileKey"])' value='@((string)context.Variables["normalizedProfile"])' duration="{{ProfileCacheTtlSeconds}}" caching-type="internal" />
       </otherwise>
     </choose>
-    <!-- Apply the allowlisted current TPM branch using the Profile Key as the shared counter. -->
+    <!-- Read the normalized application values once; both cache paths converge here. -->
     <set-variable name="backendId" value='@((string)Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["normalizedProfile"])["backendId"])' />
     <set-variable name="maxTpm" value='@((int)Newtonsoft.Json.Linq.JObject.Parse((string)context.Variables["normalizedProfile"])["maxTpm"])' />
-    <choose>
-      <when condition='@((int)context.Variables["maxTpm"] == 500)'>
-        <set-variable name="appliedTokenLimitTpm" value="500" />
-        <llm-token-limit tokens-per-minute="500" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
-      </when>
-      <when condition='@((int)context.Variables["maxTpm"] == 4000)'>
-        <set-variable name="appliedTokenLimitTpm" value="4000" />
-        <llm-token-limit tokens-per-minute="4000" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
-      </when>
-      <when condition='@((int)context.Variables["maxTpm"] == 8000)'>
-        <set-variable name="appliedTokenLimitTpm" value="8000" />
-        <llm-token-limit tokens-per-minute="8000" counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
-      </when>
-    </choose>
+    <!--
+      Apply the exact MaxTpm read from this profile row. The Profile Key is also
+      the counter key, so requests resolving to different rows have independent limits.
+    -->
+    <llm-token-limit tokens-per-minute='@((int)context.Variables["maxTpm"])' counter-key='@((string)context.Variables["profileKey"])' estimate-prompt-tokens="true" />
     <!-- Authenticate to Foundry and route through the backend entity selected by the profile. -->
     <set-header name="api-key" exists-action="delete" />
     <authentication-managed-identity resource="https://cognitiveservices.azure.com" output-token-variable-name="foundryAccessToken" ignore-error="false" />
@@ -149,7 +160,7 @@
           <value>@((string)context.Variables["backendId"])</value>
         </set-header>
         <set-header name="X-Token-Limit-Tpm" exists-action="override">
-          <value>@((string)context.Variables["appliedTokenLimitTpm"])</value>
+          <value>@(((int)context.Variables["maxTpm"]).ToString())</value>
         </set-header>
       </when>
     </choose>

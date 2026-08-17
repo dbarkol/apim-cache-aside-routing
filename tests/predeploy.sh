@@ -44,9 +44,11 @@ for policy_file in \
   grep -q 'schemaVersion' "$policy_file"
   grep -q 'backendId' "$policy_file"
   grep -q 'maxTpm' "$policy_file"
-  grep -q 'tokens-per-minute="500"' "$policy_file"
-  grep -q 'tokens-per-minute="4000"' "$policy_file"
-  grep -q 'tokens-per-minute="8000"' "$policy_file"
+  grep -q 'tokens-per-minute='"'"'@((int)context.Variables\["maxTpm"\])'"'"'' "$policy_file"
+  if grep -Eq 'tokens-per-minute="[0-9]+"' "$policy_file"; then
+    echo "Token limits must come from the validated profile row: $policy_file" >&2
+    exit 1
+  fi
   grep -q 'backend-id='"'"'@((string)context.Variables\["backendId"\])'"'"'' "$policy_file"
 done
 
