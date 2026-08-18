@@ -55,6 +55,44 @@ cleanup_test_files() {
   rm -f "$response_file" "$headers_file" "$normalized_headers_file"
 }
 
+query_log_analytics() {
+  local workspace_customer_id="$1"
+  local analytics_query="$2"
+  local query_file="$3"
+
+  az monitor log-analytics query \
+    --workspace "$workspace_customer_id" \
+    --analytics-query "$analytics_query" \
+    --timespan PT1H \
+    --output json \
+    --only-show-errors >"$query_file"
+}
+
+wait_for_log_analytics_match() {
+  local workspace_customer_id="$1"
+  local analytics_query="$2"
+  local query_file="$3"
+  local max_attempts="$4"
+  local delay_seconds="$5"
+  local jq_filter="$6"
+  shift 6
+
+  local attempt
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    query_log_analytics "$workspace_customer_id" "$analytics_query" "$query_file"
+
+    if jq -e "$@" "$jq_filter" "$query_file" >/dev/null; then
+      return 0
+    fi
+
+    if ((attempt < max_attempts)); then
+      sleep "$delay_seconds"
+    fi
+  done
+
+  return 1
+}
+
 profile_entity_url() {
   local profile_key="$1"
   printf "https://%s.table.core.windows.net/gatewayprofiles(PartitionKey='profiles-v1',RowKey='%s')" \

@@ -58,26 +58,21 @@ ApiManagementGatewayLogs
 | project BackendUrl, Requests
 "
 
-for attempt in {1..12}; do
-  az monitor log-analytics query \
-    --workspace "$workspace_customer_id" \
-    --analytics-query "$analytics_query" \
-    --timespan PT1H \
-    --output json \
-    --only-show-errors >"$query_file"
-
-  if jq -e \
-    --arg deployment_1 "/openai/deployments/${round_robin_deployment_1_name}" \
-    --arg deployment_2 "/openai/deployments/${round_robin_deployment_2_name}" '
+if wait_for_log_analytics_match \
+  "$workspace_customer_id" \
+  "$analytics_query" \
+  "$query_file" \
+  12 \
+  15 \
+  '
     any(.[]; (.BackendUrl // "" | contains($deployment_1)) and (.Requests | tonumber) > 0)
     and any(.[]; (.BackendUrl // "" | contains($deployment_2)) and (.Requests | tonumber) > 0)
-  ' "$query_file" >/dev/null; then
-    echo "Round-robin test passed: both healthy nano pool members served requests."
-    exit 0
-  fi
-
-  sleep 15
-done
+  ' \
+  --arg deployment_1 "/openai/deployments/${round_robin_deployment_1_name}" \
+  --arg deployment_2 "/openai/deployments/${round_robin_deployment_2_name}"; then
+  echo "Round-robin test passed: both healthy nano pool members served requests."
+  exit 0
+fi
 
 echo "Gateway logs did not show nonzero participation by both nano pool members." >&2
 jq -c '.' "$query_file" >&2

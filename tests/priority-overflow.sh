@@ -95,12 +95,7 @@ echo "Sending requests until APIM makes the priority-2 backend eligible."
 for ((request_number = 1; request_number <= max_requests; request_number++)); do
   status_code="$(send_chat_request lob1-gpt4-1)" || status_code="000"
 
-  az monitor log-analytics query \
-    --workspace "$workspace_customer_id" \
-    --analytics-query "$analytics_query" \
-    --timespan PT1H \
-    --output json \
-    --only-show-errors >"$query_file"
+  query_log_analytics "$workspace_customer_id" "$analytics_query" "$query_file"
 
   if jq -e '
     any(.[]; (.BackendUrl // "" | contains("/openai/deployments/")) and (.Requests | tonumber) > 0)
@@ -113,24 +108,19 @@ for ((request_number = 1; request_number <= max_requests; request_number++)); do
   sleep 5
 done
 
-for attempt in {1..12}; do
-  az monitor log-analytics query \
-    --workspace "$workspace_customer_id" \
-    --analytics-query "$analytics_query" \
-    --timespan PT1H \
-    --output json \
-    --only-show-errors >"$query_file"
-
-  if jq -e '
+if wait_for_log_analytics_match \
+  "$workspace_customer_id" \
+  "$analytics_query" \
+  "$query_file" \
+  12 \
+  15 \
+  '
     any(.[]; (.BackendUrl // "" | contains("/openai/deployments/")) and (.Requests | tonumber) > 0)
-  ' "$query_file" >/dev/null; then
-    restore_primary_backend
-    echo "Priority overflow test passed: the priority-2 backend eventually served traffic."
-    exit 0
-  fi
-
-  sleep 15
-done
+  '; then
+  restore_primary_backend
+  echo "Priority overflow test passed: the priority-2 backend eventually served traffic."
+  exit 0
+fi
 
 echo "Gateway logs did not show successful priority-2 traffic after the induced primary fault." >&2
 jq -c '.' "$query_file" >&2

@@ -58,26 +58,21 @@ ApiManagementGatewayLogs
 | project BackendUrl, Requests
 "
 
-for attempt in {1..12}; do
-  az monitor log-analytics query \
-    --workspace "$workspace_customer_id" \
-    --analytics-query "$analytics_query" \
-    --timespan PT1H \
-    --output json \
-    --only-show-errors >"$query_file"
-
-  if jq -e \
-    --arg primary "/openai/deployments/${mini_primary_deployment_name}" \
-    --arg overflow "/openai/deployments/${mini_overflow_deployment_name}" '
+if wait_for_log_analytics_match \
+  "$workspace_customer_id" \
+  "$analytics_query" \
+  "$query_file" \
+  12 \
+  15 \
+  '
     any(.[]; (.BackendUrl // "" | contains($primary)) and (.Requests | tonumber) > 0)
     and (any(.[]; (.BackendUrl // "" | contains($overflow)) and (.Requests | tonumber) > 0) | not)
-  ' "$query_file" >/dev/null; then
-    echo "Priority routing test passed: healthy mini traffic used only the priority-1 backend."
-    exit 0
-  fi
-
-  sleep 15
-done
+  ' \
+  --arg primary "/openai/deployments/${mini_primary_deployment_name}" \
+  --arg overflow "/openai/deployments/${mini_overflow_deployment_name}"; then
+  echo "Priority routing test passed: healthy mini traffic used only the priority-1 backend."
+  exit 0
+fi
 
 echo "Gateway logs did not show healthy mini traffic exclusively on the priority-1 backend." >&2
 jq -c '.' "$query_file" >&2
